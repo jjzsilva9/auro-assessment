@@ -5,11 +5,12 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.qos import QoSPresetProfiles, QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from auro_interfaces.msg import StringWithPose, Item, ItemList
+from auro_interfaces.msg import StringWithPose, Item, ItemList, ItemInfo
 from auro_interfaces.srv import ItemRequest
 
 from tf_transformations import euler_from_quaternion
@@ -75,6 +76,19 @@ class RobotController(Node):
             self.scan_callback,
             QoSPresetProfiles.SENSOR_DATA.value, callback_group=timer_callback_group)
 
+        self.item_info_subscriber = self.create_subscription(
+            ItemInfo,
+            "item_info",
+            self.item_info_callback,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=3
+            ),
+            callback_group=timer_callback_group
+        )
+
         self.cmd_vel_publisher = self.create_publisher(Twist, 'cmd_vel', 10)
         self.item_info_publisher = self.create_publisher(ItemInfo, 'item_info', 10)
 
@@ -82,6 +96,10 @@ class RobotController(Node):
         self.timer = self.create_timer(self.timer_period, self.control_loop)
 
     def item_callback(self, msg):
+        self.items = msg
+        self.get_logger().info(f"{len(items)} items currently visible")
+
+    def item_info_callback(self, msg):
         self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
 
     def odom_callback(self, msg):
@@ -108,7 +126,6 @@ class RobotController(Node):
 
     def control_loop(self):
         match self.state:
-
             case State.EXPLORING:
                 self.get_logger().info(f"Exploring")
             case State.COLLECTING:

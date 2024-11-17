@@ -19,6 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Item.msg"
   "msg/ItemList.msg"
   "msg/Direction.msg"
+  "msg/ItemInfo.msg"
   "srv/ItemRequest.srv"
   DEPENDENCIES geometry_msgs
 )
