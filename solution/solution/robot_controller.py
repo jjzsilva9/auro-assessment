@@ -7,13 +7,16 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.qos import QoSPresetProfiles, QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
-from geometry_msgs.msg import Twist, Pose
+from geometry_msgs.msg import Twist, Pose, PointStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from auro_interfaces.msg import StringWithPose, Item, ItemList, ItemInfo
+from auro_interfaces.msg import StringWithPose, Item, ItemInfo
+from assessment_interfaces.msg import ItemList
 from auro_interfaces.srv import ItemRequest
 
 from tf_transformations import euler_from_quaternion
+import tf2_ros
+import tf2_geometry_msgs
 import angles
 
 from enum import Enum
@@ -34,8 +37,9 @@ SCAN_RIGHT = 3
 
 class State(Enum):
     EXPLORING = 0
-    COLLECTING = 1
-    RETURNING = 2
+    RECORDING = 1
+    COLLECTING = 2
+    RETURNING = 3
 
 class RobotController(Node):
 
@@ -59,7 +63,7 @@ class RobotController(Node):
 
         self.item_subscriber = self.create_subscription(
             ItemList,
-            '/items',
+            '/robot1/items',
             self.item_callback,
             10, callback_group=timer_callback_group
         )
@@ -95,9 +99,27 @@ class RobotController(Node):
         self.timer_period = 0.1 # 100 milliseconds = 10 Hz
         self.timer = self.create_timer(self.timer_period, self.control_loop)
 
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
     def item_callback(self, msg):
         self.items = msg
-        self.get_logger().info(f"{len(items)} items currently visible")
+        self.get_logger().info(f"{len(self.items.data)} items currently visible")
+        try:
+            transform = self.tf_buffer.lookup_transform('base_link', 'camera_link', rclpy.time.Time())
+        except:
+            self.get_logger().info(f"Initializing")
+            return
+        for item in self.items.data:
+            estimated_distance = 32.4 * float(item.diameter) ** -0.75
+
+            camera_item = PointStamped()
+            camera_item.header.frame_id = "camera_link"
+            camera_item.point.x =  estimated_distance
+            camera_item.point.y = float(item.x)
+            camera_item.point.z = float(item.y)
+
+            target_pose = tf2_geometry_msgs.do_transform_point(camera_item, transform)
+            self.get_logger().info(f"x: {target_pose.point.x}, y: {target_pose.point.y}, z: {target_pose.point.z}")
 
     def item_info_callback(self, msg):
         self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
@@ -111,7 +133,7 @@ class RobotController(Node):
                                                     self.pose.orientation.w])
         
         self.yaw = yaw
-
+        self.get_logger().info(f"Yaw: {self.yaw}")
 
     def scan_callback(self, msg):
         front_ranges = msg.ranges[331:359] + msg.ranges[0:30]
@@ -128,8 +150,43 @@ class RobotController(Node):
         match self.state:
             case State.EXPLORING:
                 self.get_logger().info(f"Exploring")
+            case State.RECORDING:
+                self.get_logger().info(f"Recording")
+
             case State.COLLECTING:
                 self.get_logger().info(f"Collecting")
+                if len(self.items.data) == 0:
+                    self.previous_pose = self.pose
+                    self.state = State.FORWARD
+                    return
+                
+                item = self.items.data[0]
+
+                # Obtained by curve fitting from experimental runs.
+                estimated_distance = 32.4 * float(item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
+
+                self.get_logger().info(f'Estimated distance {estimated_distance}')
+
+                if estimated_distance <= 0.35:
+                    rqt = ItemRequest.Request()
+                    rqt.robot_id = self.robot_id
+                    try:
+                        future = self.pick_up_service.call_async(rqt)
+                        self.executor.spin_until_future_complete(future)
+                        response = future.result()
+                        if response.success:
+                            self.get_logger().info('Item picked up.')
+                            self.state = State.FORWARD
+                            self.items.data = []
+                        else:
+                            self.get_logger().info('Unable to pick up item: ' + response.message)
+                    except Exception as e:
+                        self.get_logger().info('Exception ' + e)   
+
+                msg = Twist()
+                msg.linear.x = 0.25 * estimated_distance
+                msg.angular.z = item.x / 320.0
+                self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
                 self.get_logger().info(f"Returning")
     def destroy_node(self):
