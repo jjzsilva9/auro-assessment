@@ -23,6 +23,10 @@ from enum import Enum
 import random
 import math
 
+CAMERA_HEIGHT = 480
+CAMERA_WIDTH = 640
+CAMERA_FOCAL_LENGTH = 30.4
+
 LINEAR_VELOCITY  = 0.3
 ANGULAR_VELOCITY = 0.5
 
@@ -101,6 +105,7 @@ class RobotController(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
     def item_callback(self, msg):
         self.items = msg
         self.get_logger().info(f"{len(self.items.data)} items currently visible")
@@ -112,14 +117,16 @@ class RobotController(Node):
         for item in self.items.data:
             estimated_distance = 32.4 * float(item.diameter) ** -0.75
 
-            camera_item = PointStamped()
-            camera_item.header.frame_id = "camera_link"
-            camera_item.point.x =  estimated_distance
-            camera_item.point.y = float(item.x)
-            camera_item.point.z = float(item.y)
+            # camera_item = PointStamped()
+            # camera_item.header.frame_id = "camera_link"
+            # camera_item.point.x =  estimated_distance
+            # camera_item.point.y = float(item.x)
+            # camera_item.point.z = float(item.y)
 
-            target_pose = tf2_geometry_msgs.do_transform_point(camera_item, transform)
-            self.get_logger().info(f"x: {target_pose.point.x}, y: {target_pose.point.y}, z: {target_pose.point.z}")
+            # target_pose = tf2_geometry_msgs.do_transform_point(camera_item, transform)
+            relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_FOCAL_LENGTH
+            relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_FOCAL_LENGTH
+            self.get_logger().info(f"x: {relative_x}, y: {relative_y}, z: {estimated_distance}")
 
     def item_info_callback(self, msg):
         self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
