@@ -25,7 +25,9 @@ import math
 
 CAMERA_HEIGHT = 480
 CAMERA_WIDTH = 640
-CAMERA_FOCAL_LENGTH = 30.4
+CAMERA_FOCAL_LENGTH = 3.04
+CAMERA_SCALE_FACTOR = 892
+CAMERA_F = CAMERA_FOCAL_LENGTH * CAMERA_SCALE_FACTOR
 
 LINEAR_VELOCITY  = 0.3
 ANGULAR_VELOCITY = 0.5
@@ -124,8 +126,8 @@ class RobotController(Node):
             # camera_item.point.z = float(item.y)
 
             # target_pose = tf2_geometry_msgs.do_transform_point(camera_item, transform)
-            relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_FOCAL_LENGTH
-            relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_FOCAL_LENGTH
+            relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_F
+            relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_F
             self.get_logger().info(f"x: {relative_x}, y: {relative_y}, z: {estimated_distance}")
 
     def item_info_callback(self, msg):
