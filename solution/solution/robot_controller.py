@@ -9,10 +9,17 @@ from rclpy.qos import QoSPresetProfiles, QoSProfile, ReliabilityPolicy, Durabili
 
 from geometry_msgs.msg import Twist, Pose, PointStamped
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, CameraInfo
+from shape_msgs.msg import Plane
 from auro_interfaces.msg import StringWithPose, Item, ItemInfo
+from std_msgs.msg import Header
+from vision_msgs.msg import Point2D
 from assessment_interfaces.msg import ItemList
 from auro_interfaces.srv import ItemRequest
+from builtin_interfaces.msg import Time
+
+from ipm_library.ipm import IPM
+from ipm_library.exceptions import NoIntersectionError
 
 from tf_transformations import euler_from_quaternion
 import tf2_ros
@@ -25,9 +32,7 @@ import math
 
 CAMERA_HEIGHT = 480
 CAMERA_WIDTH = 640
-CAMERA_FOCAL_LENGTH = 3.04
-CAMERA_SCALE_FACTOR = 892
-CAMERA_F = CAMERA_FOCAL_LENGTH * CAMERA_SCALE_FACTOR
+
 
 LINEAR_VELOCITY  = 0.3
 ANGULAR_VELOCITY = 0.5
@@ -61,6 +66,15 @@ class RobotController(Node):
         self.scan_triggered = [False] * 4
         self.items = ItemList() # TODO Look into this as a datastructure, we might want a quicker way to find the closest item
 
+        self.camera_info = CameraInfo(
+            header=Header(frame_id='camera_rgb_optical_frame'),
+            width=CAMERA_WIDTH,
+            height=CAMERA_HEIGHT,
+            k=[530.4669406576809, 0.0, 320.5, 0.0, 530.4669406576809, 240.5, 0.0, 0.0, 1.0],
+            d=[0.0, 0.0, 0.0, 0.0, 0.0],
+            distortion_model="plumb_bob"
+        )
+        
         client_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
 
@@ -102,33 +116,50 @@ class RobotController(Node):
         self.cmd_vel_publisher = self.create_publisher(Twist, 'cmd_vel', 10)
         self.item_info_publisher = self.create_publisher(ItemInfo, 'item_info', 10)
 
+        self.point_pub = self.create_publisher(PointStamped, "ipm_point", 10)
+
         self.timer_period = 0.1 # 100 milliseconds = 10 Hz
         self.timer = self.create_timer(self.timer_period, self.control_loop)
 
         self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+        self.ipm = IPM(self.tf_buffer, self.camera_info, distortion=True)
+
+        self.plane = Plane()
+        self.plane.coef = [0.0, 0.0, 1.0, -0.01]
 
     def item_callback(self, msg):
         self.items = msg
+        time = Time()
         self.get_logger().info(f"{len(self.items.data)} items currently visible")
-        try:
-            transform = self.tf_buffer.lookup_transform('base_link', 'camera_link', rclpy.time.Time())
-        except:
-            self.get_logger().info(f"Initializing")
-            return
         for item in self.items.data:
-            estimated_distance = 32.4 * float(item.diameter) ** -0.75
 
-            # camera_item = PointStamped()
-            # camera_item.header.frame_id = "camera_link"
-            # camera_item.point.x =  estimated_distance
-            # camera_item.point.y = float(item.x)
-            # camera_item.point.z = float(item.y)
+            point = Point2D(
+                x = CAMERA_WIDTH/2 - item.x,
+                y = CAMERA_HEIGHT/2 - item.y
+            )
 
-            # target_pose = tf2_geometry_msgs.do_transform_point(camera_item, transform)
-            relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_F
-            relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_F
-            self.get_logger().info(f"x: {relative_x}, y: {relative_y}, z: {estimated_distance}")
+            self.get_logger().info(f"Image coords - x: {point.x}, y: {point.y}")
+
+            try:
+                point = self.ipm.map_point(
+                    self.plane,
+                    point,
+                    time,
+                    plane_frame_id='camera_rgb_frame',
+                    output_frame_id='base_footprint'
+                )
+
+                self.get_logger().info(f"World coords - x: {point.point.x}, y: {point.point.y}, z: {point.point.z}")
+                self.point_pub.publish(point)
+            except NoIntersectionError:
+                self.get_logger().info("No intersection found")
+            # estimated_distance = 32.4 * float(item.diameter) ** -0.75
+
+            # relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_F
+            # relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_F
+            
+            # self.get_logger().info(f"x: {relative_x}, y: {relative_y}, z: {estimated_distance}")
 
     def item_info_callback(self, msg):
         self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
