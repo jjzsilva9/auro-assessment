@@ -7,7 +7,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.qos import QoSPresetProfiles, QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
-from geometry_msgs.msg import Twist, Pose, PointStamped
+from geometry_msgs.msg import Twist, Pose, PointStamped, Point
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, CameraInfo
 from shape_msgs.msg import Plane
@@ -18,11 +18,9 @@ from assessment_interfaces.msg import ItemList
 from auro_interfaces.srv import ItemRequest
 from builtin_interfaces.msg import Time
 
-from ipm_library.ipm import IPM
-from ipm_library.exceptions import NoIntersectionError
-
-from tf_transformations import euler_from_quaternion
+from tf_transformations import euler_from_quaternion, quaternion_matrix
 import tf2_ros
+import numpy as np
 import tf2_geometry_msgs
 import angles
 
@@ -123,10 +121,6 @@ class RobotController(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
-        self.ipm = IPM(self.tf_buffer, self.camera_info, distortion=True)
-
-        self.plane = Plane()
-        self.plane.coef = [0.0, 0.0, 1.0, -0.01]
 
     def item_callback(self, msg):
         self.items = msg
@@ -141,20 +135,23 @@ class RobotController(Node):
 
             self.get_logger().info(f"Image coords - x: {point.x}, y: {point.y}")
 
-            try:
-                point = self.ipm.map_point(
-                    self.plane,
-                    point,
-                    time,
-                    plane_frame_id='camera_rgb_frame',
-                    output_frame_id='base_footprint'
-                )
+            estimated_distance = 32.4 * float(item.diameter) ** -0.75
+            x = (point.x - self.camera_info.k[2]) * estimated_distance / self.camera_info.k[0]
+            y = (point.y - self.camera_info.k[5]) * estimated_distance / self.camera_info.k[4]
 
-                self.get_logger().info(f"World coords - x: {point.point.x}, y: {point.point.y}, z: {point.point.z}")
-                self.point_pub.publish(point)
-            except NoIntersectionError:
-                self.get_logger().info("No intersection found")
-            # estimated_distance = 32.4 * float(item.diameter) ** -0.75
+            print(f"X: {x}, Y: {y}, Z:{estimated_distance}")
+
+            header = Header(stamp=time, frame_id="base_footprint")
+            point_3D = Point()
+            point_3D.x = estimated_distance
+            point_3D.y = -x
+            point_3D.z = y
+
+            relativePoint = self.convertRelativePoint(point_3D)
+            publish_point = PointStamped(header=header, point=relativePoint)
+            self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
+            self.point_pub.publish(publish_point)
+            #
 
             # relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_F
             # relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_F
@@ -229,11 +226,32 @@ class RobotController(Node):
                 self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
                 self.get_logger().info(f"Returning")
+
+    def convertRelativePoint(self, point):
+        orientation = self.pose.orientation
+        quaternion = [orientation.x, orientation.y, orientation.z, orientation.w]
+        R = quaternion_matrix(quaternion)[:3, :3]
+
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = [self.pose.position.x, self.pose.position.y, self.pose.position.z]
+
+        transformed_point = np.dot(T, np.array([point.x, point.y, point.z, 1]))
+
+        point_3D = Point()
+        point_3D.x = transformed_point[0]
+        point_3D.y = transformed_point[1]
+        point_3D.z = transformed_point[2]
+
+        return point_3D
+
     def destroy_node(self):
         msg = Twist()
         self.cmd_vel_publisher.publish(msg)
         self.get_logger().info(f"Stopping: {msg}")
         super().destroy_node()
+
+
 
 
 def main(args=None):
