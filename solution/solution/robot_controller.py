@@ -62,8 +62,7 @@ class RobotController(Node):
         self.turn_angle = 0.0
         self.turn_direction = TURN_LEFT
         self.scan_triggered = [False] * 4
-        self.items = ItemList() # TODO Look into this as a datastructure, we might want a quicker way to find the closest item
-
+        self.item_list = []
         self.camera_info = CameraInfo(
             header=Header(frame_id='camera_rgb_optical_frame'),
             width=CAMERA_WIDTH,
@@ -125,7 +124,7 @@ class RobotController(Node):
     def item_callback(self, msg):
         self.items = msg
         time = Time()
-        self.get_logger().info(f"{len(self.items.data)} items currently visible")
+        #self.get_logger().info(f"{len(self.items.data)} items currently visible")
         for item in self.items.data:
 
             point = Point2D(
@@ -133,13 +132,13 @@ class RobotController(Node):
                 y = CAMERA_HEIGHT/2 - item.y
             )
 
-            self.get_logger().info(f"Image coords - x: {point.x}, y: {point.y}")
+            #self.get_logger().info(f"Image coords - x: {point.x}, y: {point.y}")
 
             estimated_distance = 32.4 * float(item.diameter) ** -0.75
             x = (point.x - self.camera_info.k[2]) * estimated_distance / self.camera_info.k[0]
             y = (point.y - self.camera_info.k[5]) * estimated_distance / self.camera_info.k[4]
 
-            print(f"X: {x}, Y: {y}, Z:{estimated_distance}")
+            #print(f"X: {x}, Y: {y}, Z:{estimated_distance}")
 
             header = Header(stamp=time, frame_id="base_footprint")
             point_3D = Point()
@@ -147,16 +146,37 @@ class RobotController(Node):
             point_3D.y = -x
             point_3D.z = y
 
-            relativePoint = self.convertRelativePoint(point_3D)
-            publish_point = PointStamped(header=header, point=relativePoint)
-            self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
-            self.point_pub.publish(publish_point)
-            #
-
-            # relative_x = (estimated_distance * (item.x - CAMERA_WIDTH/2))/CAMERA_F
-            # relative_y = (estimated_distance * (item.y - CAMERA_HEIGHT/2))/CAMERA_F
+            point_stamped = PointStamped(header=header, point=point_3D)
+            relativePoint = self.tf_buffer.transform(point_stamped, "odom")
+            #self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
             
-            # self.get_logger().info(f"x: {relative_x}, y: {relative_y}, z: {estimated_distance}")
+            self.add_item(relativePoint.point, estimated_distance)
+
+            self.get_logger().info(f"Items in Item List: {len(self.item_list)}")
+            for item, observed_distance in self.item_list:
+                publish_point = PointStamped()
+                publish_point.header = Header(stamp=time, frame_id="odom")
+                publish_point.point = item
+                self.point_pub.publish(publish_point)
+
+    def distance(self, point1, point2): 
+        return math.sqrt((point1.x - point2.x) ** 2 + (point1.y - point2.y) ** 2 + (point1.z - point2.z) ** 2)
+        
+    def add_item(self, new_item, estimated_distance):
+        distance_threshold = 0.5 * max(1, estimated_distance)
+
+        found = False
+        for i in range(len(self.item_list)):
+            item, observed_distance = self.item_list[i]
+            if observed_distance >= estimated_distance:
+                if self.distance(item, new_item) < estimated_distance * 0.2:
+                    found = True
+                    self.item_list[i][0].x = new_item.x
+                    self.item_list[i][0].y = new_item.y
+                    self.item_list[i][0].z = new_item.z
+                    self.item_list[i][1] = estimated_distance
+        if not found:
+            self.item_list.append([new_item, estimated_distance])
 
     def item_info_callback(self, msg):
         self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
@@ -226,24 +246,6 @@ class RobotController(Node):
                 self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
                 self.get_logger().info(f"Returning")
-
-    def convertRelativePoint(self, point):
-        orientation = self.pose.orientation
-        quaternion = [orientation.x, orientation.y, orientation.z, orientation.w]
-        R = quaternion_matrix(quaternion)[:3, :3]
-
-        T = np.eye(4)
-        T[:3, :3] = R
-        T[:3, 3] = [self.pose.position.x, self.pose.position.y, self.pose.position.z]
-
-        transformed_point = np.dot(T, np.array([point.x, point.y, point.z, 1]))
-
-        point_3D = Point()
-        point_3D.x = transformed_point[0]
-        point_3D.y = transformed_point[1]
-        point_3D.z = transformed_point[2]
-
-        return point_3D
 
     def destroy_node(self):
         msg = Twist()
