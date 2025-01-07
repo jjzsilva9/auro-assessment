@@ -6,8 +6,9 @@ from rclpy.signals import SignalHandlerOptions
 from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.qos import QoSPresetProfiles, QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+from nav2_simple_commander.robot_navigator import BasicNavigator
 
-from geometry_msgs.msg import Twist, Pose, PointStamped, Point
+from geometry_msgs.msg import Twist, Pose, PointStamped, Point, PoseWithCovarianceStamped, PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, CameraInfo
 from shape_msgs.msg import Plane
@@ -63,6 +64,7 @@ class RobotController(Node):
         self.turn_direction = TURN_LEFT
         self.scan_triggered = [False] * 4
         self.item_list = []
+        self.robot_id = "robot1"
         self.camera_info = CameraInfo(
             header=Header(frame_id='camera_rgb_optical_frame'),
             width=CAMERA_WIDTH,
@@ -87,13 +89,13 @@ class RobotController(Node):
 
         self.odom_subscriber = self.create_subscription(
             Odometry,
-            'odom',
+            '/odom',
             self.odom_callback,
             10, callback_group=timer_callback_group)
         
         self.scan_subscriber = self.create_subscription(
             LaserScan,
-            'scan',
+            '/scan',
             self.scan_callback,
             QoSPresetProfiles.SENSOR_DATA.value, callback_group=timer_callback_group)
 
@@ -121,12 +123,31 @@ class RobotController(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
+        self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, '/robot1/initialpose', 10) 
+        initial_pose = PoseWithCovarianceStamped() 
+        initial_pose.header.frame_id = 'map' 
+        initial_pose.pose.pose.position.x = -3.5
+        initial_pose.pose.pose.position.y = 0.0
+        initial_pose.pose.pose.orientation.w = 1.0
+
+        pose_stamped = PoseStamped()
+        pose_stamped.header.frame_id = 'map'
+        pose_stamped.pose = initial_pose.pose.pose
+
+        self.initial_pose_publisher.publish(initial_pose)
+        self.navigator = BasicNavigator()
+        self.navigator.setInitialPose(pose_stamped)
     def item_callback(self, msg):
         self.items = msg
         time = Time()
         #self.get_logger().info(f"{len(self.items.data)} items currently visible")
         for item in self.items.data:
-
+            
+            # We determine distance from the pixel size of the item
+            # When the item is at an extreme of the image, this is warped
+            # This can lead to an inaccuracte estimate of the point, so we should skip
+            if abs(item.x) > 240:
+                continue
             point = Point2D(
                 x = CAMERA_WIDTH/2 - item.x,
                 y = CAMERA_HEIGHT/2 - item.y
@@ -169,7 +190,7 @@ class RobotController(Node):
         for i in range(len(self.item_list)):
             item, observed_distance = self.item_list[i]
             if observed_distance >= estimated_distance:
-                if self.distance(item, new_item) < estimated_distance * 0.2:
+                if self.distance(item, new_item) < estimated_distance * 0.3:
                     found = True
                     self.item_list[i][0].x = new_item.x
                     self.item_list[i][0].y = new_item.y
@@ -207,24 +228,30 @@ class RobotController(Node):
         match self.state:
             case State.EXPLORING:
                 self.get_logger().info(f"Exploring")
+                if len(self.item_list) > 0:
+                    self.state = State.COLLECTING
             case State.RECORDING:
                 self.get_logger().info(f"Recording")
 
             case State.COLLECTING:
                 self.get_logger().info(f"Collecting")
-                if len(self.items.data) == 0:
+                if len(self.item_list) == 0:
                     self.previous_pose = self.pose
                     self.state = State.FORWARD
                     return
                 
-                item = self.items.data[0]
+                item, observed_distance = self.item_list[0]
 
                 # Obtained by curve fitting from experimental runs.
-                estimated_distance = 32.4 * float(item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
-
-                self.get_logger().info(f'Estimated distance {estimated_distance}')
-
-                if estimated_distance <= 0.35:
+                estimated_distance = self.distance(self.pose.position, item)
+                goalPose = PoseStamped()
+                goalPose.header = Header(frame_id="odom")
+                goalPose.pose.position.x = item.x
+                goalPose.pose.position.y = item.y
+                goalPose.pose.position.z = item.z
+                self.navigator.goToPose(goalPose)
+                if self.navigator.isTaskComplete():
+                    self.item_list.pop(0)
                     rqt = ItemRequest.Request()
                     rqt.robot_id = self.robot_id
                     try:
@@ -233,8 +260,7 @@ class RobotController(Node):
                         response = future.result()
                         if response.success:
                             self.get_logger().info('Item picked up.')
-                            self.state = State.FORWARD
-                            self.items.data = []
+                            self.state = State.RETURNING
                         else:
                             self.get_logger().info('Unable to pick up item: ' + response.message)
                     except Exception as e:
