@@ -66,26 +66,26 @@ class RobotController(Node):
         self.scan_triggered = [False] * 4
         self.item_list = []
         self.tracking_item = None
-        self.collecting_item
+        self.collecting_item = None
         self.carried_item = None
         self.robot_id = "robot1"
         self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
         zone_header = Header(frame_id="odom")
         purple_pose = PoseStamped()
         purple_pose.header = zone_header
-        purple_pose.pose.position.x=-3.5
+        purple_pose.pose.position.x=0.0
         purple_pose.pose.position.y=-2.5
         cyan_pose = PoseStamped()
         cyan_pose.header = zone_header
-        cyan_pose.pose.position.x=-3.5
-        cyan_pose.pose.position.y=2.5
+        cyan_pose.pose.position.x=0.0 #
+        cyan_pose.pose.position.y=2.5 #
         green_pose = PoseStamped()
         green_pose.header = zone_header
-        green_pose.pose.position.x=2.5
+        green_pose.pose.position.x=6.0
         green_pose.pose.position.y=-2.5
         pink_pose = PoseStamped()
         pink_pose.header = zone_header
-        pink_pose.pose.position.x=2.5
+        pink_pose.pose.position.x=6.0
         pink_pose.pose.position.y=2.5
         self.zone_locations = {"Purple" : purple_pose, 
                                 "Cyan" : cyan_pose, 
@@ -116,7 +116,7 @@ class RobotController(Node):
 
         self.odom_subscriber = self.create_subscription(
             Odometry,
-            '/odom',
+            '/robot1/odom',
             self.odom_callback,
             10, callback_group=timer_callback_group)
         
@@ -164,6 +164,7 @@ class RobotController(Node):
         self.initial_pose_publisher.publish(initial_pose)
         self.navigator = BasicNavigator()
         self.navigator.setInitialPose(pose_stamped)
+
     def item_callback(self, msg):
         self.items = msg
         time = Time()
@@ -181,12 +182,12 @@ class RobotController(Node):
             #self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
             estimated_distance = 32.4 * float(item.diameter) ** -0.75
             self.add_item(relativePoint.point, estimated_distance)
-            self.get_logger().info(f"Items in Item List: {len(self.item_list)}")
-            for item, observed_distance in self.item_list:
-                publish_point = PointStamped()
-                publish_point.header = Header(stamp=time, frame_id="odom")
-                publish_point.point = item
-                self.point_pub.publish(publish_point)
+            #self.get_logger().info(f"Items in Item List: {len(self.item_list)}")
+            # for item, observed_distance in self.item_list:
+            #     publish_point = PointStamped()
+            #     publish_point.header = Header(stamp=time, frame_id="odom")
+            #     publish_point.point = item
+            #     self.point_pub.publish(publish_point)
 
     def distance(self, point1, point2): 
         return math.sqrt((point1.x - point2.x) ** 2 + (point1.y - point2.y) ** 2 + (point1.z - point2.z) ** 2)
@@ -238,7 +239,6 @@ class RobotController(Node):
                                                     self.pose.orientation.w])
         
         self.yaw = yaw
-        self.get_logger().info(f"Yaw: {self.yaw}")
 
     def scan_callback(self, msg):
         front_ranges = msg.ranges[331:359] + msg.ranges[0:30]
@@ -255,7 +255,7 @@ class RobotController(Node):
         match self.state:
             case State.EXPLORING:
                 # State for exploring to find items when none have been found
-                self.get_logger().info(f"Exploring")
+                #self.get_logger().info(f"Exploring")
                 if len(self.item_list) > 0:
                     item, observed_distance = self.item_list[0]
                     self.tracking_item = item
@@ -277,34 +277,26 @@ class RobotController(Node):
                         self.item_list.pop(0)
             case State.NAVIGATING:
                 # State for when navigating using nav2 to the approximate location of an item
-                self.get_logger().info(f"Navigating")
+                #self.get_logger().info(f"Navigating")
 
                 if self.navigator.isTaskComplete():
                     self.navigator.backup(backup_dist=0.1)
                     self.state = State.BACKING_UP
             case State.BACKING_UP:
-                self.get_logger().info(f"Backing up")
+                #self.get_logger().info(f"Backing up")
                 if self.navigator.isTaskComplete():
                     if len(self.items.data) == 0:
                         self.state = State.EXPLORING
                     else:
-                        closest_item = self.items.data[0]
-                        closest_item_world = self.itemToWorldCoords(closest_item).point
-                        min_distance = self.distance(closest_item_world, self.tracking_item)
-                        for item in self.items.data:
-                            world_coords = self.itemToWorldCoords(item).point
-                            if self.distance(world_coords, self.tracking_item) < min_distance:
-                                closest_item = item
-                                min_distance = self.distance(world_coords, self.tracking_item)
-                        self.collecting_item = closest_item
                         self.state = State.COLLECTING
             case State.COLLECTING:
-                self.get_logger().info(f"Collecting")
+                #self.get_logger().info(f"Collecting")
                 
+                i = self.items.data
+                i.sort(reverse=True, key = lambda x: x.diameter)
+                self.collecting_item = i[0]
                 # Obtained by curve fitting from experimental runs.
                 estimated_distance = 32.4 * float(self.collecting_item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
-
-                self.get_logger().info(f'Estimated distance {estimated_distance}')
 
                 if estimated_distance <= 0.35:
                     rqt = ItemRequest.Request()
@@ -325,11 +317,11 @@ class RobotController(Node):
 
                 msg = Twist()
                 msg.linear.x = 0.25 * estimated_distance
-                msg.angular.z = item.x / 320.0
+                msg.angular.z = self.collecting_item.x / 320.0
                 self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
-                self.get_logger().info(f"Returning")
-                self.get_logger().info(f"Item colour is {self.carried_item.colour}")
+                #self.get_logger().info(f"Returning")
+                #self.get_logger().info(f"Item colour is {self.carried_item.colour}")
 
                 if self.navigator.isTaskComplete():
                     rqt = ItemRequest.Request()
@@ -349,29 +341,33 @@ class RobotController(Node):
 
     def setZoneGoal(self):
         colour = self.carried_item.colour
+        assigned_dest = None
         assigned_zone = None
-        distances = [[zone, self.distance(self.pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
-        distances.sort(key=lambda x:x[0])
+        distances = [[zone, position, self.distance(self.pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
+        distances.sort(key=lambda x:x[2])
         colour_count = 0
 
         for c in self.zone_assignments.values():
             if c == colour:
                 colour_count += 1
 
-        for zone, distance in distances:
+        for zone, position, distance in distances:
             if self.zone_assignments[zone] == colour:
+                assigned_dest = position
                 assigned_zone = zone
                 break
             elif self.zone_assignments[zone] == None:
                 if colour_count == 0:
+                    assigned_dest = position
                     assigned_zone = zone
                     break
                 elif colour_count == 1 and not self.double_zone_assigned:
                     self.double_zone_assigned = True
+                    assigned_dest = position
                     assigned_zone = zone
                     break
-            
-        self.navigator.goToPose(assigned_zone)
+        self.get_logger().info(f"Assigned zone: {assigned_zone}")
+        self.navigator.goToPose(assigned_dest)
 
 
     def destroy_node(self):
