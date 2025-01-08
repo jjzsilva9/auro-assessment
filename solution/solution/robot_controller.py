@@ -67,7 +67,7 @@ class RobotController(Node):
         self.item_list = []
         self.tracking_item = None
         self.collecting_item = None
-        self.carried_item = None
+        self.carried_item_colour = None
         self.robot_id = "robot1"
         self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
         zone_header = Header(frame_id="odom")
@@ -181,7 +181,7 @@ class RobotController(Node):
             
             #self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
             estimated_distance = 32.4 * float(item.diameter) ** -0.75
-            self.add_item(relativePoint.point, estimated_distance)
+            self.add_item(relativePoint.point, estimated_distance, item.colour)
             #self.get_logger().info(f"Items in Item List: {len(self.item_list)}")
             # for item, observed_distance in self.item_list:
             #     publish_point = PointStamped()
@@ -212,20 +212,20 @@ class RobotController(Node):
         relativePoint = self.tf_buffer.transform(point_stamped, "odom")
         return relativePoint
         
-    def add_item(self, new_item, estimated_distance):
+    def add_item(self, new_item, estimated_distance, colour):
         distance_threshold = 1
 
         found = False
         for i in range(len(self.item_list)):
-            item, observed_distance = self.item_list[i]
-            if self.distance(item, new_item) < distance_threshold:
+            item, observed_distance, prev_colour = self.item_list[i]
+            if self.distance(item, new_item) < distance_threshold and prev_colour == colour:
                 found = True
                 self.item_list[i][0].x = new_item.x
                 self.item_list[i][0].y = new_item.y
                 self.item_list[i][0].z = new_item.z
                 self.item_list[i][1] = estimated_distance
         if not found:
-            self.item_list.append([new_item, estimated_distance])
+            self.item_list.append([new_item, estimated_distance, colour])
 
     def item_info_callback(self, msg):
         self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
@@ -257,8 +257,12 @@ class RobotController(Node):
                 # State for exploring to find items when none have been found
                 #self.get_logger().info(f"Exploring")
                 if len(self.item_list) > 0:
-                    item, observed_distance = self.item_list[0]
+                    i = self.item_list
+                    i.sort(key=lambda x: self.distance(self.pose.position, x[0]))
+                    item, observed_distance, carried_item_colour = i[0]
                     self.tracking_item = item
+                    self.carried_item_colour = carried_item_colour
+                    self.item_list.remove(i[0])
 
                     # Obtained by curve fitting from experimental runs.
                     estimated_distance = self.distance(self.pose.position, item)
@@ -274,14 +278,30 @@ class RobotController(Node):
                             raise Exception("Goal rejected")
                         self.state = State.NAVIGATING
                     except Exception as e:
-                        self.item_list.pop(0)
+                        pass
             case State.NAVIGATING:
                 # State for when navigating using nav2 to the approximate location of an item
                 #self.get_logger().info(f"Navigating")
 
                 if self.navigator.isTaskComplete():
-                    self.navigator.backup(backup_dist=0.1)
-                    self.state = State.BACKING_UP
+
+                    # Try to pickup
+                    rqt = ItemRequest.Request()
+                    rqt.robot_id = self.robot_id
+                    try:
+                        future = self.pick_up_service.call_async(rqt)
+                        self.executor.spin_until_future_complete(future)
+                        response = future.result()
+                        if response.success:
+                            self.get_logger().info('Item picked up.')
+                            self.setZoneGoal()
+                            self.state = State.RETURNING
+                        else:
+                            self.get_logger().info('Unable to pick up item: ' + response.message)
+                            self.navigator.backup(backup_dist=0.1)
+                            self.state = State.BACKING_UP
+                    except Exception as e:
+                        self.get_logger().info('Exception ' + str(e))   
             case State.BACKING_UP:
                 #self.get_logger().info(f"Backing up")
                 if self.navigator.isTaskComplete():
@@ -307,7 +327,7 @@ class RobotController(Node):
                         response = future.result()
                         if response.success:
                             self.get_logger().info('Item picked up.')
-                            self.carried_item = self.collecting_item
+                            self.carried_item_colour = self.collecting_item.colour
                             self.setZoneGoal()
                             self.state = State.RETURNING
                         else:
@@ -321,7 +341,7 @@ class RobotController(Node):
                 self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
                 #self.get_logger().info(f"Returning")
-                #self.get_logger().info(f"Item colour is {self.carried_item.colour}")
+                #self.get_logger().info(f"Item colour is {self.carried_item_colour}")
 
                 if self.navigator.isTaskComplete():
                     rqt = ItemRequest.Request()
@@ -340,7 +360,7 @@ class RobotController(Node):
 
 
     def setZoneGoal(self):
-        colour = self.carried_item.colour
+        colour = self.carried_item_colour
         assigned_dest = None
         assigned_zone = None
         distances = [[zone, position, self.distance(self.pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
