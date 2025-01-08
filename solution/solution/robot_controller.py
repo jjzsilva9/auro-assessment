@@ -66,10 +66,31 @@ class RobotController(Node):
         self.scan_triggered = [False] * 4
         self.item_list = []
         self.tracking_item = None
+        self.collecting_item
         self.carried_item = None
         self.robot_id = "robot1"
         self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
-        self.zone_locations = {"Purple" : , "Cyan" : , "Green" : , "Pink" : }
+        zone_header = Header(frame_id="odom")
+        purple_pose = PoseStamped()
+        purple_pose.header = zone_header
+        purple_pose.pose.position.x=-3.5
+        purple_pose.pose.position.y=-2.5
+        cyan_pose = PoseStamped()
+        cyan_pose.header = zone_header
+        cyan_pose.pose.position.x=-3.5
+        cyan_pose.pose.position.y=2.5
+        green_pose = PoseStamped()
+        green_pose.header = zone_header
+        green_pose.pose.position.x=2.5
+        green_pose.pose.position.y=-2.5
+        pink_pose = PoseStamped()
+        pink_pose.header = zone_header
+        pink_pose.pose.position.x=2.5
+        pink_pose.pose.position.y=2.5
+        self.zone_locations = {"Purple" : purple_pose, 
+                                "Cyan" : cyan_pose, 
+                                "Green" : green_pose, 
+                                "Pink" : pink_pose}
         self.double_zone_assigned = False
         self.camera_info = CameraInfo(
             header=Header(frame_id='camera_rgb_optical_frame'),
@@ -160,7 +181,6 @@ class RobotController(Node):
             #self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
             estimated_distance = 32.4 * float(item.diameter) ** -0.75
             self.add_item(relativePoint.point, estimated_distance)
-
             self.get_logger().info(f"Items in Item List: {len(self.item_list)}")
             for item, observed_distance in self.item_list:
                 publish_point = PointStamped()
@@ -260,53 +280,53 @@ class RobotController(Node):
                 self.get_logger().info(f"Navigating")
 
                 if self.navigator.isTaskComplete():
-                    self.navigator.backup(backup_dist = 0.2, backup_speed = 0.05, time_allowance = 3)
+                    self.navigator.backup(backup_dist=0.1)
                     self.state = State.BACKING_UP
             case State.BACKING_UP:
                 self.get_logger().info(f"Backing up")
                 if self.navigator.isTaskComplete():
-                    self.state = State.COLLECTING
+                    if len(self.items.data) == 0:
+                        self.state = State.EXPLORING
+                    else:
+                        closest_item = self.items.data[0]
+                        closest_item_world = self.itemToWorldCoords(closest_item).point
+                        min_distance = self.distance(closest_item_world, self.tracking_item)
+                        for item in self.items.data:
+                            world_coords = self.itemToWorldCoords(item).point
+                            if self.distance(world_coords, self.tracking_item) < min_distance:
+                                closest_item = item
+                                min_distance = self.distance(world_coords, self.tracking_item)
+                        self.collecting_item = closest_item
+                        self.state = State.COLLECTING
             case State.COLLECTING:
                 self.get_logger().info(f"Collecting")
                 
-                if len(self.items.data) == 0:
-                    self.state = State.EXPLORING
-                else:
-                    closest_item = self.items.data[0]
-                    closest_item_world = self.itemToWorldCoords(closest_item).point
-                    min_distance = self.distance(closest_item_world, self.tracking_item)
-                    for item in self.items.data:
-                        world_coords = self.itemToWorldCoords(item).point
-                        if self.distance(world_coords, self.tracking_item) < min_distance:
-                            closest_item = item
-                            min_distance = self.distance(world_coords, self.tracking_item)
+                # Obtained by curve fitting from experimental runs.
+                estimated_distance = 32.4 * float(self.collecting_item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
 
-                    # Obtained by curve fitting from experimental runs.
-                    estimated_distance = 32.4 * float(closest_item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
+                self.get_logger().info(f'Estimated distance {estimated_distance}')
 
-                    self.get_logger().info(f'Estimated distance {estimated_distance}')
+                if estimated_distance <= 0.35:
+                    rqt = ItemRequest.Request()
+                    rqt.robot_id = self.robot_id
+                    try:
+                        future = self.pick_up_service.call_async(rqt)
+                        self.executor.spin_until_future_complete(future)
+                        response = future.result()
+                        if response.success:
+                            self.get_logger().info('Item picked up.')
+                            self.carried_item = self.collecting_item
+                            self.setZoneGoal()
+                            self.state = State.RETURNING
+                        else:
+                            self.get_logger().info('Unable to pick up item: ' + response.message)
+                    except Exception as e:
+                        self.get_logger().info('Exception ' + str(e))   
 
-                    if estimated_distance <= 0.35:
-                        rqt = ItemRequest.Request()
-                        rqt.robot_id = self.robot_id
-                        try:
-                            future = self.pick_up_service.call_async(rqt)
-                            self.executor.spin_until_future_complete(future)
-                            response = future.result()
-                            if response.success:
-                                self.get_logger().info('Item picked up.')
-                                self.carried_item = closest_item
-                                self.setZoneGoal()
-                                self.state = State.RETURNING
-                            else:
-                                self.get_logger().info('Unable to pick up item: ' + response.message)
-                        except Exception as e:
-                            self.get_logger().info('Exception ' + e)   
-
-                    msg = Twist()
-                    msg.linear.x = 0.25 * estimated_distance
-                    msg.angular.z = item.x / 320.0
-                    self.cmd_vel_publisher.publish(msg)
+                msg = Twist()
+                msg.linear.x = 0.25 * estimated_distance
+                msg.angular.z = item.x / 320.0
+                self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
                 self.get_logger().info(f"Returning")
                 self.get_logger().info(f"Item colour is {self.carried_item.colour}")
@@ -324,20 +344,25 @@ class RobotController(Node):
                         else:
                             self.get_logger().info('Unable to pick up item: ' + response.message)
                     except Exception as e:
-                        self.get_logger().info('Exception ' + e)
+                        self.get_logger().info('Exception ' + str(e))
 
 
     def setZoneGoal(self):
         colour = self.carried_item.colour
         assigned_zone = None
-        distances = [[zone, self.distance(self.pose.position, position)] for zone, position in zone_locations.items()].sorted(key=lambda x:x[0])
-        colour_count = zone_assignements.values().count(colour)
+        distances = [[zone, self.distance(self.pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
+        distances.sort(key=lambda x:x[0])
+        colour_count = 0
+
+        for c in self.zone_assignments.values():
+            if c == colour:
+                colour_count += 1
 
         for zone, distance in distances:
-            if zone_assignments[zone] == colour:
+            if self.zone_assignments[zone] == colour:
                 assigned_zone = zone
                 break
-            elif zone_assignments[zone] == None:
+            elif self.zone_assignments[zone] == None:
                 if colour_count == 0:
                     assigned_zone = zone
                     break
