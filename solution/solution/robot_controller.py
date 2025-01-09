@@ -5,45 +5,25 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-from rclpy.qos import QoSPresetProfiles, QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from nav2_simple_commander.robot_navigator import BasicNavigator
 
 from geometry_msgs.msg import Twist, Pose, PointStamped, Point, PoseWithCovarianceStamped, PoseStamped
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan, CameraInfo
-from shape_msgs.msg import Plane
-from auro_interfaces.msg import StringWithPose, Item, ItemInfo
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Header
 from vision_msgs.msg import Point2D
-from assessment_interfaces.msg import ItemList
+from assessment_interfaces.msg import ItemList, ItemHolders
 from auro_interfaces.srv import ItemRequest
 from builtin_interfaces.msg import Time
 
-from tf_transformations import euler_from_quaternion, quaternion_matrix
 import tf2_ros
-import numpy as np
-import tf2_geometry_msgs
-import angles
+from tf2_geometry_msgs import PointStamped
 
 from enum import Enum
-import random
 import math
 
 CAMERA_HEIGHT = 480
 CAMERA_WIDTH = 640
-
-
-LINEAR_VELOCITY  = 0.3
-ANGULAR_VELOCITY = 0.5
-
-TURN_LEFT = 1
-TURN_RIGHT = -1
-
-SCAN_THRESHOLD = 0.5
-SCAN_FRONT = 0
-SCAN_LEFT = 1
-SCAN_BACK = 2
-SCAN_RIGHT = 3
 
 class State(Enum):
     EXPLORING = 0
@@ -64,7 +44,7 @@ class RobotController(Node):
         self.collecting_item = None
         self.carried_item_colour = None
         self.robot_id = "robot1"
-        self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
+
         zone_header = Header(frame_id="odom")
         purple_pose = PoseStamped()
         purple_pose.header = zone_header
@@ -82,11 +62,11 @@ class RobotController(Node):
         pink_pose.header = zone_header
         pink_pose.pose.position.x=5.99
         pink_pose.pose.position.y=2.5
-        self.zone_locations = {"Purple" : purple_pose, 
-                                "Cyan" : cyan_pose, 
-                                "Green" : green_pose, 
-                                "Pink" : pink_pose}
+        
+        self.zone_locations = {"Purple" : purple_pose, "Cyan" : cyan_pose, "Green" : green_pose, "Pink" : pink_pose}
+        self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
         self.double_zone_assigned = False
+
         self.camera_info = CameraInfo(
             header=Header(frame_id='camera_rgb_optical_frame'),
             width=CAMERA_WIDTH,
@@ -109,6 +89,13 @@ class RobotController(Node):
             10, callback_group=timer_callback_group
         )
 
+        self.carried_item_subscriber = self.create_subscription(
+            ItemHolders,
+            '/item_holders',
+            self.carried_item_callback,
+            10, callback_group=timer_callback_group
+        )
+
         self.odom_subscriber = self.create_subscription(
             Odometry,
             '/robot1/odom',
@@ -117,9 +104,7 @@ class RobotController(Node):
 
         self.cmd_vel_publisher = self.create_publisher(Twist, 'cmd_vel', 10)
 
-        #self.point_pub = self.create_publisher(PointStamped, "ipm_point", 10)
-
-        self.timer_period = 0.1 # 100 milliseconds = 10 Hz
+        self.timer_period = 0.1
         self.timer = self.create_timer(self.timer_period, self.control_loop)
 
         self.tf_buffer = tf2_ros.Buffer()
@@ -160,8 +145,15 @@ class RobotController(Node):
             
             # If the estimated coordinates are out of map bounds we should skip
             if 0 <= relativePoint.point.x <= 6 and -2.5 <= relativePoint.point.y <= 2.5:
-                estimated_distance = 32.4 * float(item.diameter) ** -0.75
-                self.add_item(relativePoint.point, estimated_distance, item.colour)
+                self.add_item(relativePoint.point, item.colour)
+
+    def carried_item_callback(self, msg):
+        """
+        Processes data from the item_holders topic.
+        
+        Used to identify the colour of a carried item.
+        """
+        self.carried_item_colour = msg.data[0].item_colour
 
     def distance(self, point1, point2): 
         """
@@ -196,7 +188,7 @@ class RobotController(Node):
         relativePoint = self.tf_buffer.transform(point_stamped, "odom")
         return relativePoint
         
-    def add_item(self, new_item, estimated_distance, colour):
+    def add_item(self, new_item, colour):
         """
         Adds an item and it's colour to the item list.
 
@@ -232,10 +224,9 @@ class RobotController(Node):
                 if len(self.item_list) > 0:
                     i = self.item_list
                     i.sort(key=lambda x: self.distance(self.pose.position, x[0]))
-                    item, carried_item_colour = i[0]
+                    item, colour = i[0]
 
                     self.tracking_item = item
-                    self.carried_item_colour = carried_item_colour
                     self.item_list.remove(i[0])
 
                     # Set the destination
@@ -252,7 +243,7 @@ class RobotController(Node):
                         self.state = State.NAVIGATING
             case State.NAVIGATING:
                 # State for navigating using nav2 to the approximate location of an item
-
+                
                 if self.navigator.isTaskComplete():
                     # Try to pickup
                     rqt = ItemRequest.Request()
@@ -300,7 +291,6 @@ class RobotController(Node):
                         if response.success:
                             # If we succeed, set a zone as the goal
                             self.get_logger().info('Item picked up.')
-                            self.carried_item_colour = self.collecting_item.colour
                             self.setZoneGoal()
                             self.state = State.RETURNING
                         else:
@@ -373,7 +363,6 @@ class RobotController(Node):
                     assigned_zone = zone
                     break
         
-        assigned_dest = self.zone_locations["Green"]
         self.get_logger().info(f"Assigned zone: {assigned_zone}")
         self.navigator.goToPose(assigned_dest)
 
