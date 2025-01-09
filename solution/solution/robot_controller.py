@@ -59,11 +59,6 @@ class RobotController(Node):
 
         self.state = State.EXPLORING
         self.pose = Pose()
-        self.yaw = 0.0
-        self.previous_yaw = 0.0
-        self.turn_angle = 0.0
-        self.turn_direction = TURN_LEFT
-        self.scan_triggered = [False] * 4
         self.item_list = []
         self.tracking_item = None
         self.collecting_item = None
@@ -81,11 +76,11 @@ class RobotController(Node):
         cyan_pose.pose.position.y=2.5 #
         green_pose = PoseStamped()
         green_pose.header = zone_header
-        green_pose.pose.position.x=6.0
+        green_pose.pose.position.x=5.5
         green_pose.pose.position.y=-2.5
         pink_pose = PoseStamped()
         pink_pose.header = zone_header
-        pink_pose.pose.position.x=6.0
+        pink_pose.pose.position.x=5.0
         pink_pose.pose.position.y=2.5
         self.zone_locations = {"Purple" : purple_pose, 
                                 "Cyan" : cyan_pose, 
@@ -119,30 +114,10 @@ class RobotController(Node):
             '/robot1/odom',
             self.odom_callback,
             10, callback_group=timer_callback_group)
-        
-        self.scan_subscriber = self.create_subscription(
-            LaserScan,
-            '/scan',
-            self.scan_callback,
-            QoSPresetProfiles.SENSOR_DATA.value, callback_group=timer_callback_group)
-
-        self.item_info_subscriber = self.create_subscription(
-            ItemInfo,
-            "item_info",
-            self.item_info_callback,
-            QoSProfile(
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.VOLATILE,
-                history=HistoryPolicy.KEEP_LAST,
-                depth=3
-            ),
-            callback_group=timer_callback_group
-        )
 
         self.cmd_vel_publisher = self.create_publisher(Twist, 'cmd_vel', 10)
-        self.item_info_publisher = self.create_publisher(ItemInfo, 'item_info', 10)
 
-        self.point_pub = self.create_publisher(PointStamped, "ipm_point", 10)
+        #self.point_pub = self.create_publisher(PointStamped, "ipm_point", 10)
 
         self.timer_period = 0.1 # 100 milliseconds = 10 Hz
         self.timer = self.create_timer(self.timer_period, self.control_loop)
@@ -151,6 +126,7 @@ class RobotController(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
         self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, '/robot1/initialpose', 10) 
+
         initial_pose = PoseWithCovarianceStamped() 
         initial_pose.header.frame_id = 'map' 
         initial_pose.pose.pose.position.x = -3.5
@@ -160,17 +136,20 @@ class RobotController(Node):
         pose_stamped = PoseStamped()
         pose_stamped.header.frame_id = 'map'
         pose_stamped.pose = initial_pose.pose.pose
-
         self.initial_pose_publisher.publish(initial_pose)
+
         self.navigator = BasicNavigator()
         self.navigator.setInitialPose(pose_stamped)
 
     def item_callback(self, msg):
+        """
+        Processes data from the items topic.
+
+        Converts each item to world coordinates and adds it to the item list.
+        """
         self.items = msg
-        time = Time()
-        #self.get_logger().info(f"{len(self.items.data)} items currently visible")
+        
         for item in self.items.data:
-            
             # We determine distance from the pixel size of the item
             # When the item is at an extreme of the image, this is warped
             # This can lead to an inaccuracte estimate of the point, so we should skip
@@ -179,26 +158,31 @@ class RobotController(Node):
             
             relativePoint = self.itemToWorldCoords(item)
             
-            #self.get_logger().info(f"World coords - x: {x}, y: {y}, z: {estimated_distance}")
-            estimated_distance = 32.4 * float(item.diameter) ** -0.75
-            self.add_item(relativePoint.point, estimated_distance, item.colour)
-            #self.get_logger().info(f"Items in Item List: {len(self.item_list)}")
-            # for item, observed_distance in self.item_list:
-            #     publish_point = PointStamped()
-            #     publish_point.header = Header(stamp=time, frame_id="odom")
-            #     publish_point.point = item
-            #     self.point_pub.publish(publish_point)
+            # If the estimated coordinates are out of map bounds we should skip
+            if 0 <= relativePoint.point.x <= 6 and -2.5 <= relativePoint.point.y <= 2.5:
+                estimated_distance = 32.4 * float(item.diameter) ** -0.75
+                self.add_item(relativePoint.point, estimated_distance, item.colour)
 
     def distance(self, point1, point2): 
+        """
+        Calculates the euclidean distance between 2 points
+        """
         return math.sqrt((point1.x - point2.x) ** 2 + (point1.y - point2.y) ** 2 + (point1.z - point2.z) ** 2)
 
     def itemToWorldCoords(self, item):
+        """
+        Converts from a 2D point on the camera image to a 3D world coordinate.
+        
+        This is achieved using the intrinsic properties of the camera and inverting
+        the perspective projection.
+        """
         time = Time()
         point = Point2D(
                 x = CAMERA_WIDTH/2 - item.x,
                 y = CAMERA_HEIGHT/2 - item.y
             )
 
+        # We derive the distance from the diameter of the item
         estimated_distance = 32.4 * float(item.diameter) ** -0.75
         x = (point.x - self.camera_info.k[2]) * estimated_distance / self.camera_info.k[0]
         y = (point.y - self.camera_info.k[5]) * estimated_distance / self.camera_info.k[4]
@@ -213,58 +197,48 @@ class RobotController(Node):
         return relativePoint
         
     def add_item(self, new_item, estimated_distance, colour):
+        """
+        Adds an item and it's colour to the item list.
+
+        Also checks if it's location is close to an item already in the list,
+        and if so, doesn't add it.
+        """
         distance_threshold = 1
 
         found = False
         for i in range(len(self.item_list)):
-            item, observed_distance, prev_colour = self.item_list[i]
+            item, prev_colour = self.item_list[i]
             if self.distance(item, new_item) < distance_threshold and prev_colour == colour:
                 found = True
-                self.item_list[i][0].x = new_item.x
-                self.item_list[i][0].y = new_item.y
-                self.item_list[i][0].z = new_item.z
-                self.item_list[i][1] = estimated_distance
+                break
         if not found:
-            self.item_list.append([new_item, estimated_distance, colour])
-
-    def item_info_callback(self, msg):
-        self.get_logger().info(f"x: {msg.x}, y: {msg.y}")
+            self.item_list.append([new_item, colour])
 
     def odom_callback(self, msg):
+        """
+        Sets the pose from the odom topic
+        """
         self.pose = msg.pose.pose
 
-        (roll, pitch, yaw) = euler_from_quaternion([self.pose.orientation.x,
-                                                    self.pose.orientation.y,
-                                                    self.pose.orientation.z,
-                                                    self.pose.orientation.w])
-        
-        self.yaw = yaw
-
-    def scan_callback(self, msg):
-        front_ranges = msg.ranges[331:359] + msg.ranges[0:30]
-        left_ranges  = msg.ranges[31:90]
-        back_ranges  = msg.ranges[91:270]
-        right_ranges = msg.ranges[271:330]
-
-        self.scan_triggered[SCAN_FRONT] = min(front_ranges) < SCAN_THRESHOLD 
-        self.scan_triggered[SCAN_LEFT]  = min(left_ranges)  < SCAN_THRESHOLD
-        self.scan_triggered[SCAN_BACK]  = min(back_ranges)  < SCAN_THRESHOLD
-        self.scan_triggered[SCAN_RIGHT] = min(right_ranges) < SCAN_THRESHOLD
-
     def control_loop(self):
+        """
+        The main control loop of the robot.
+        """
         match self.state:
             case State.EXPLORING:
                 # State for exploring to find items when none have been found
-                #self.get_logger().info(f"Exploring")
+
+                # If an item is found, set the closest one as the goal destination
                 if len(self.item_list) > 0:
                     i = self.item_list
                     i.sort(key=lambda x: self.distance(self.pose.position, x[0]))
-                    item, observed_distance, carried_item_colour = i[0]
+                    item, carried_item_colour = i[0]
+
                     self.tracking_item = item
                     self.carried_item_colour = carried_item_colour
                     self.item_list.remove(i[0])
 
-                    # Obtained by curve fitting from experimental runs.
+                    # Set the destination
                     estimated_distance = self.distance(self.pose.position, item)
                     goalPose = PoseStamped()
                     goalPose.header = Header(frame_id="odom")
@@ -272,19 +246,14 @@ class RobotController(Node):
                     goalPose.pose.position.y = item.y
                     goalPose.pose.position.z = item.z
 
-                    try:
-                        result = self.navigator.goToPose(goalPose)
-                        if not result:
-                            raise Exception("Goal rejected")
+                    # If the goal is successfully set, switch to navigating state
+                    result = self.navigator.goToPose(goalPose)
+                    if result:  
                         self.state = State.NAVIGATING
-                    except Exception as e:
-                        pass
             case State.NAVIGATING:
-                # State for when navigating using nav2 to the approximate location of an item
-                #self.get_logger().info(f"Navigating")
+                # State for navigating using nav2 to the approximate location of an item
 
                 if self.navigator.isTaskComplete():
-
                     # Try to pickup
                     rqt = ItemRequest.Request()
                     rqt.robot_id = self.robot_id
@@ -297,27 +266,30 @@ class RobotController(Node):
                             self.setZoneGoal()
                             self.state = State.RETURNING
                         else:
+                            # If we fail to pick up, we back up slightly and then see if an item is visible
                             self.get_logger().info('Unable to pick up item: ' + response.message)
                             self.navigator.backup(backup_dist=0.1)
                             self.state = State.BACKING_UP
                     except Exception as e:
-                        self.get_logger().info('Exception ' + str(e))   
+                        self.get_logger().info('Exception ' + str(e))
             case State.BACKING_UP:
-                #self.get_logger().info(f"Backing up")
+                # State for backing up
+
                 if self.navigator.isTaskComplete():
                     if len(self.items.data) == 0:
                         self.state = State.EXPLORING
                     else:
                         self.state = State.COLLECTING
             case State.COLLECTING:
-                #self.get_logger().info(f"Collecting")
+                # State for collecting if the pickup from nav2 fails
                 
+                # We pick the closest item to collect
                 i = self.items.data
                 i.sort(reverse=True, key = lambda x: x.diameter)
                 self.collecting_item = i[0]
-                # Obtained by curve fitting from experimental runs.
                 estimated_distance = 32.4 * float(self.collecting_item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
 
+                # Attempt to pickup if we are close enough
                 if estimated_distance <= 0.35:
                     rqt = ItemRequest.Request()
                     rqt.robot_id = self.robot_id
@@ -326,12 +298,15 @@ class RobotController(Node):
                         self.executor.spin_until_future_complete(future)
                         response = future.result()
                         if response.success:
+                            # If we succeed, set a zone as the goal
                             self.get_logger().info('Item picked up.')
                             self.carried_item_colour = self.collecting_item.colour
                             self.setZoneGoal()
                             self.state = State.RETURNING
                         else:
+                            # If we fail, explore
                             self.get_logger().info('Unable to pick up item: ' + response.message)
+                            self.state = State.EXPLORING
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))   
 
@@ -340,9 +315,9 @@ class RobotController(Node):
                 msg.angular.z = self.collecting_item.x / 320.0
                 self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
-                #self.get_logger().info(f"Returning")
-                #self.get_logger().info(f"Item colour is {self.carried_item_colour}")
+                # State for returning to a zone if we are carrying an item
 
+                # When we arrive at the zone, drop the item
                 if self.navigator.isTaskComplete():
                     rqt = ItemRequest.Request()
                     rqt.robot_id = self.robot_id
@@ -354,23 +329,34 @@ class RobotController(Node):
                             self.get_logger().info('Item returned up.')
                             self.state = State.EXPLORING
                         else:
-                            self.get_logger().info('Unable to pick up item: ' + response.message)
+                            # TODO Add a retry here, or handle if it actually isnt carrying an item
+                            self.get_logger().info('Unable to offload item: ' + response.message)
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
 
 
     def setZoneGoal(self):
+        """
+        Sets the goal zone when an item has been picked up.
+        
+        Finds the closest zone that accepts the colour whilst allowing
+        all colours to have a zone.
+        """
         colour = self.carried_item_colour
         assigned_dest = None
         assigned_zone = None
+
+        # Sorts the zones on euclidean distance
         distances = [[zone, position, self.distance(self.pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
         distances.sort(key=lambda x:x[2])
+        
+        # Counts the zone assignments of the colour
         colour_count = 0
-
         for c in self.zone_assignments.values():
             if c == colour:
                 colour_count += 1
 
+        # Finds the best fit zone
         for zone, position, distance in distances:
             if self.zone_assignments[zone] == colour:
                 assigned_dest = position
@@ -386,6 +372,8 @@ class RobotController(Node):
                     assigned_dest = position
                     assigned_zone = zone
                     break
+        
+        assigned_dest = self.zone_locations["Green"]
         self.get_logger().info(f"Assigned zone: {assigned_zone}")
         self.navigator.goToPose(assigned_dest)
 
@@ -395,8 +383,6 @@ class RobotController(Node):
         self.cmd_vel_publisher.publish(msg)
         self.get_logger().info(f"Stopping: {msg}")
         super().destroy_node()
-
-
 
 
 def main(args=None):
