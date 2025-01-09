@@ -76,11 +76,11 @@ class RobotController(Node):
         cyan_pose.pose.position.y=2.5 #
         green_pose = PoseStamped()
         green_pose.header = zone_header
-        green_pose.pose.position.x=5.5
+        green_pose.pose.position.x=5.99
         green_pose.pose.position.y=-2.5
         pink_pose = PoseStamped()
         pink_pose.header = zone_header
-        pink_pose.pose.position.x=5.0
+        pink_pose.pose.position.x=5.99
         pink_pose.pose.position.y=2.5
         self.zone_locations = {"Purple" : purple_pose, 
                                 "Cyan" : cyan_pose, 
