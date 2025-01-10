@@ -16,6 +16,8 @@ from assessment_interfaces.msg import ItemList, ItemHolders
 from auro_interfaces.srv import ItemRequest
 from solution_interfaces.srv import SetZoneGoal, AddItem, GetItem
 from builtin_interfaces.msg import Time
+from ament_index_python.packages import get_package_share_directory
+import os
 
 import tf2_ros
 from tf2_geometry_msgs import PointStamped
@@ -45,7 +47,10 @@ class RobotController(Node):
         self.tracking_item = None
         self.collecting_item = None
         self.carried_item_colour = None
-        self.robot_id = "robot1"
+        self.robot_id = self.get_namespace()[1:]
+
+        package_share_directory = get_package_share_directory('solution')
+        self.behaviour_tree = os.path.join(package_share_directory, 'config', 'dynamic_replanning.xml') 
 
         self.camera_info = CameraInfo(
             header=Header(frame_id='camera_rgb_optical_frame'),
@@ -67,7 +72,7 @@ class RobotController(Node):
         
         self.item_subscriber = self.create_subscription(
             ItemList,
-            '/robot1/items',
+            f'/{self.robot_id}/items',
             self.item_callback,
             10, callback_group=timer_callback_group
         )
@@ -88,11 +93,11 @@ class RobotController(Node):
 
         self.odom_subscriber = self.create_subscription(
             Odometry,
-            '/robot1/odom',
+            f'/{self.robot_id}/odom',
             self.odom_callback,
             10, callback_group=timer_callback_group)
 
-        self.cmd_vel_publisher = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.cmd_vel_publisher = self.create_publisher(Twist, f'/{self.robot_id}/cmd_vel', 10)
 
         self.timer_period = 0.1
         self.timer = self.create_timer(self.timer_period, self.control_loop)
@@ -100,12 +105,15 @@ class RobotController(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
-        self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, '/robot1/initialpose', 10) 
+        self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, f'/{self.robot_id}/initialpose', 10) 
 
+        self.declare_parameter('initial_pose', [0.0, 0.0, 0.0]) 
+        initial_x, initial_y, initial_yaw= self.get_parameter('initial_pose').get_parameter_value().double_array_value
+        
         initial_pose = PoseWithCovarianceStamped() 
         initial_pose.header.frame_id = 'map' 
-        initial_pose.pose.pose.position.x = -3.5
-        initial_pose.pose.pose.position.y = 0.0
+        initial_pose.pose.pose.position.x = initial_x
+        initial_pose.pose.pose.position.y = initial_y
         initial_pose.pose.pose.orientation.w = 1.0
 
         pose_stamped = PoseStamped()
@@ -113,7 +121,7 @@ class RobotController(Node):
         pose_stamped.pose = initial_pose.pose.pose
         self.initial_pose_publisher.publish(initial_pose)
 
-        self.navigator = BasicNavigator()
+        self.navigator = BasicNavigator(namespace=self.get_namespace())
         self.navigator.setInitialPose(pose_stamped)
 
     def item_callback(self, msg):
@@ -203,8 +211,8 @@ class RobotController(Node):
                     
                     response = self.get_item()
                     
-                    if response.success:
-                        result = self.navigator.goToPose(response.item_pose_stamped)
+                    if response:
+                        result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
                         if result:  
                             self.state = State.NAVIGATING
             case State.NAVIGATING:
@@ -302,7 +310,7 @@ class RobotController(Node):
             if response.success:
                 # If we succeed, set a zone as the goal
                 self.get_logger().info(f'Assigned zone: {response.assigned_dest}')
-                self.navigator.goToPose(response.assigned_dest)
+                self.navigator.goToPose(response.assigned_dest, behavior_tree=self.behaviour_tree)
                 self.state = State.RETURNING
             else:
                 # If we fail, explore

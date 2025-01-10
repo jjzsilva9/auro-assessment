@@ -13,23 +13,23 @@ class ZoneGoalService(Node):
         super().__init__('zone_goal_service')
         self.srv = self.create_service(SetZoneGoal, '/set_zone_goal', self.set_zone_goal_callback)
 
-        zone_header = Header(frame_id="odom")
+        zone_header = Header(frame_id="map")
         purple_pose = PoseStamped()
         purple_pose.header = zone_header
-        purple_pose.pose.position.x=-0.25
-        purple_pose.pose.position.y=-2.75
+        purple_pose.pose.position.x=-3.5
+        purple_pose.pose.position.y=-2.5
         cyan_pose = PoseStamped()
         cyan_pose.header = zone_header
-        cyan_pose.pose.position.x=-0.25
-        cyan_pose.pose.position.y=2.75
+        cyan_pose.pose.position.x=-3.5
+        cyan_pose.pose.position.y=2.5
         green_pose = PoseStamped()
         green_pose.header = zone_header
-        green_pose.pose.position.x=5.99
-        green_pose.pose.position.y=-2.75
+        green_pose.pose.position.x=2.5
+        green_pose.pose.position.y=-2.5
         pink_pose = PoseStamped()
         pink_pose.header = zone_header
-        pink_pose.pose.position.x=5.99
-        pink_pose.pose.position.y=2.75
+        pink_pose.pose.position.x=2.5
+        pink_pose.pose.position.y=2.5
         
         self.zone_locations = {"Purple" : purple_pose, "Cyan" : cyan_pose, "Green" : green_pose, "Pink" : pink_pose}
         self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
