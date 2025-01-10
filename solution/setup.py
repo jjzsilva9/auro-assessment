@@ -48,6 +48,7 @@ setup(
     entry_points={
         'console_scripts': [
             'robot_controller = solution.robot_controller:main',
+            'item_tracker = solution.item_tracker:main',
             'zone_goal_service = solution.zone_goal_service:main',
             'data_logger = solution.data_logger:main',
         ],

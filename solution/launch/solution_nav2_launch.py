@@ -49,6 +49,12 @@ def robot_controller_actions(context : LaunchContext):
                 package='solution',
                 executable='zone_goal_service',
                 output='screen',
+            ),
+
+            Node(
+                package='solution',
+                executable='item_tracker',
+                output='screen'
             )
 
             # Node(

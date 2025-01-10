@@ -16,6 +16,8 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetZoneGoal.srv"
+  "srv/AddItem.srv"
+  "srv/GetItem.srv"
   DEPENDENCIES geometry_msgs
 )
 

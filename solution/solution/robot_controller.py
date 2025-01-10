@@ -10,11 +10,11 @@ from nav2_simple_commander.robot_navigator import BasicNavigator
 from geometry_msgs.msg import Twist, Pose, PointStamped, Point, PoseWithCovarianceStamped, PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Int32
 from vision_msgs.msg import Point2D
 from assessment_interfaces.msg import ItemList, ItemHolders
 from auro_interfaces.srv import ItemRequest
-from solution_interfaces.srv import SetZoneGoal
+from solution_interfaces.srv import SetZoneGoal, AddItem, GetItem
 from builtin_interfaces.msg import Time
 
 import tf2_ros
@@ -40,7 +40,8 @@ class RobotController(Node):
 
         self.state = State.EXPLORING
         self.pose = Pose()
-        self.item_list = []
+        self.tracked_items = 0
+
         self.tracking_item = None
         self.collecting_item = None
         self.carried_item_colour = None
@@ -61,11 +62,20 @@ class RobotController(Node):
         self.pick_up_service = self.create_client(ItemRequest, '/pick_up_item', callback_group=client_callback_group)
         self.offload_service = self.create_client(ItemRequest, '/offload_item', callback_group=client_callback_group)
         self.set_zone_service = self.create_client(SetZoneGoal, '/set_zone_goal', callback_group=client_callback_group)
-
+        self.add_item_client = self.create_client(AddItem, '/add_item', callback_group=client_callback_group)
+        self.get_item_client = self.create_client(GetItem, '/get_item', callback_group=client_callback_group)
+        
         self.item_subscriber = self.create_subscription(
             ItemList,
             '/robot1/items',
             self.item_callback,
+            10, callback_group=timer_callback_group
+        )
+
+        self.tracked_items_subscriber = self.create_subscription(
+            Int32,
+            '/tracked_items',
+            self.tracked_items_callback,
             10, callback_group=timer_callback_group
         )
 
@@ -126,6 +136,12 @@ class RobotController(Node):
             # If the estimated coordinates are out of map bounds we should skip
             if 0 <= relativePoint.point.x <= 6 and -2.5 <= relativePoint.point.y <= 2.5:
                 self.add_item(relativePoint.point, item.colour)
+            
+    def tracked_items_callback(self, msg):
+        """
+        Stores the amount of items tracked in ItemTracker
+        """
+        self.tracked_items = msg.data
 
     def carried_item_callback(self, msg):
         """
@@ -168,24 +184,6 @@ class RobotController(Node):
         relativePoint = self.tf_buffer.transform(point_stamped, "odom")
         return relativePoint
         
-    def add_item(self, new_item, colour):
-        """
-        Adds an item and it's colour to the item list.
-
-        Also checks if it's location is close to an item already in the list,
-        and if so, doesn't add it.
-        """
-        distance_threshold = 1
-
-        found = False
-        for i in range(len(self.item_list)):
-            item, prev_colour = self.item_list[i]
-            if self.distance(item, new_item) < distance_threshold and prev_colour == colour:
-                found = True
-                break
-        if not found:
-            self.item_list.append([new_item, colour])
-
     def odom_callback(self, msg):
         """
         Sets the pose from the odom topic
@@ -201,26 +199,14 @@ class RobotController(Node):
                 # State for exploring to find items when none have been found
 
                 # If an item is found, set the closest one as the goal destination
-                if len(self.item_list) > 0:
-                    i = self.item_list
-                    i.sort(key=lambda x: self.distance(self.pose.position, x[0]))
-                    item, colour = i[0]
-
-                    self.tracking_item = item
-                    self.item_list.remove(i[0])
-
-                    # Set the destination
-                    estimated_distance = self.distance(self.pose.position, item)
-                    goalPose = PoseStamped()
-                    goalPose.header = Header(frame_id="odom")
-                    goalPose.pose.position.x = item.x
-                    goalPose.pose.position.y = item.y
-                    goalPose.pose.position.z = item.z
-
-                    # If the goal is successfully set, switch to navigating state
-                    result = self.navigator.goToPose(goalPose)
-                    if result:  
-                        self.state = State.NAVIGATING
+                if self.tracked_items > 0:
+                    
+                    response = self.get_item()
+                    
+                    if response.success:
+                        result = self.navigator.goToPose(response.item_pose_stamped)
+                        if result:  
+                            self.state = State.NAVIGATING
             case State.NAVIGATING:
                 # State for navigating using nav2 to the approximate location of an item
                 
@@ -234,7 +220,7 @@ class RobotController(Node):
                         response = future.result()
                         if response.success:
                             self.get_logger().info('Item picked up.')
-                            self.setZoneGoal()
+                            self.set_zone_goal()
                             self.state = State.RETURNING
                         else:
                             # If we fail to pick up, we back up slightly and then see if an item is visible
@@ -271,7 +257,7 @@ class RobotController(Node):
                         if response.success:
                             # If we succeed, set a zone as the goal
                             self.get_logger().info('Item picked up.')
-                            self.setZoneGoal()
+                            self.set_zone_goal()
                             self.state = State.RETURNING
                         else:
                             # If we fail, explore
@@ -305,7 +291,7 @@ class RobotController(Node):
                         self.get_logger().info('Exception ' + str(e))
 
 
-    def setZoneGoal(self):
+    def set_zone_goal(self):
         rqt = SetZoneGoal.Request()
         rqt.carried_item_colour = self.carried_item_colour
         rqt.robot_pose = self.pose
@@ -321,6 +307,33 @@ class RobotController(Node):
             else:
                 # If we fail, explore
                 self.get_logger().info('Unable to set zone goal')
+                self.state = State.EXPLORING
+        except Exception as e:
+            self.get_logger().info('Exception ' + str(e))
+
+    def add_item(self, item_position, item_colour):
+        rqt = AddItem.Request()
+        rqt.item_position = item_position
+        rqt.item_colour = item_colour
+        try:
+            future = self.add_item_client.call_async(rqt)
+            self.executor.spin_until_future_complete(future)
+        except Exception as e:
+            self.get_logger().info('Exception ' + str(e))
+
+    def get_item(self):
+        rqt = GetItem.Request()
+        rqt.robot_position = self.pose.position
+        try:
+            future = self.get_item_client.call_async(rqt)
+            self.executor.spin_until_future_complete(future)
+            response = future.result()
+            if response.success:
+                self.get_logger().info(f'Item is of type: {type(response.item_pose_stamped)}')
+                return response
+            else:
+                # If we fail, explore
+                self.get_logger().info('Get Item failed, likely no tracked items')
                 self.state = State.EXPLORING
         except Exception as e:
             self.get_logger().info('Exception ' + str(e))
