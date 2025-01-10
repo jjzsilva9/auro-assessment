@@ -14,6 +14,7 @@ from std_msgs.msg import Header
 from vision_msgs.msg import Point2D
 from assessment_interfaces.msg import ItemList, ItemHolders
 from auro_interfaces.srv import ItemRequest
+from solution_interfaces.srv import SetZoneGoal
 from builtin_interfaces.msg import Time
 
 import tf2_ros
@@ -45,28 +46,6 @@ class RobotController(Node):
         self.carried_item_colour = None
         self.robot_id = "robot1"
 
-        zone_header = Header(frame_id="odom")
-        purple_pose = PoseStamped()
-        purple_pose.header = zone_header
-        purple_pose.pose.position.x=0.0
-        purple_pose.pose.position.y=-2.5
-        cyan_pose = PoseStamped()
-        cyan_pose.header = zone_header
-        cyan_pose.pose.position.x=0.0 #
-        cyan_pose.pose.position.y=2.5 #
-        green_pose = PoseStamped()
-        green_pose.header = zone_header
-        green_pose.pose.position.x=5.99
-        green_pose.pose.position.y=-2.5
-        pink_pose = PoseStamped()
-        pink_pose.header = zone_header
-        pink_pose.pose.position.x=5.99
-        pink_pose.pose.position.y=2.5
-        
-        self.zone_locations = {"Purple" : purple_pose, "Cyan" : cyan_pose, "Green" : green_pose, "Pink" : pink_pose}
-        self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
-        self.double_zone_assigned = False
-
         self.camera_info = CameraInfo(
             header=Header(frame_id='camera_rgb_optical_frame'),
             width=CAMERA_WIDTH,
@@ -81,6 +60,7 @@ class RobotController(Node):
 
         self.pick_up_service = self.create_client(ItemRequest, '/pick_up_item', callback_group=client_callback_group)
         self.offload_service = self.create_client(ItemRequest, '/offload_item', callback_group=client_callback_group)
+        self.set_zone_service = self.create_client(SetZoneGoal, '/set_zone_goal', callback_group=client_callback_group)
 
         self.item_subscriber = self.create_subscription(
             ItemList,
@@ -326,46 +306,24 @@ class RobotController(Node):
 
 
     def setZoneGoal(self):
-        """
-        Sets the goal zone when an item has been picked up.
-        
-        Finds the closest zone that accepts the colour whilst allowing
-        all colours to have a zone.
-        """
-        colour = self.carried_item_colour
-        assigned_dest = None
-        assigned_zone = None
-
-        # Sorts the zones on euclidean distance
-        distances = [[zone, position, self.distance(self.pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
-        distances.sort(key=lambda x:x[2])
-        
-        # Counts the zone assignments of the colour
-        colour_count = 0
-        for c in self.zone_assignments.values():
-            if c == colour:
-                colour_count += 1
-
-        # Finds the best fit zone
-        for zone, position, distance in distances:
-            if self.zone_assignments[zone] == colour:
-                assigned_dest = position
-                assigned_zone = zone
-                break
-            elif self.zone_assignments[zone] == None:
-                if colour_count == 0:
-                    assigned_dest = position
-                    assigned_zone = zone
-                    break
-                elif colour_count == 1 and not self.double_zone_assigned:
-                    self.double_zone_assigned = True
-                    assigned_dest = position
-                    assigned_zone = zone
-                    break
-        
-        self.get_logger().info(f"Assigned zone: {assigned_zone}")
-        self.navigator.goToPose(assigned_dest)
-
+        rqt = SetZoneGoal.Request()
+        rqt.carried_item_colour = self.carried_item_colour
+        rqt.robot_pose = self.pose
+        try:
+            future = self.set_zone_service.call_async(rqt)
+            self.executor.spin_until_future_complete(future)
+            response = future.result()
+            if response.success:
+                # If we succeed, set a zone as the goal
+                self.get_logger().info(f'Assigned zone: {response.assigned_dest}')
+                self.navigator.goToPose(response.assigned_dest)
+                self.state = State.RETURNING
+            else:
+                # If we fail, explore
+                self.get_logger().info('Unable to set zone goal')
+                self.state = State.EXPLORING
+        except Exception as e:
+            self.get_logger().info('Exception ' + str(e))
 
     def destroy_node(self):
         msg = Twist()
