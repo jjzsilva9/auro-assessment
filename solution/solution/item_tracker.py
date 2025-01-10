@@ -35,7 +35,6 @@ class ItemTracker(Node):
         This is checked based on distance to an existing point
         and colour.
         """
-        self.get_logger().info("Received request")
         new_item_position = request.item_position
         new_colour = request.item_colour
 
@@ -57,7 +56,6 @@ class ItemTracker(Node):
         """
         Returns the closest item to a robot.
         """
-        self.get_logger().info("Received request")
 
         if len(self.item_list) == 0:
             response.success = False

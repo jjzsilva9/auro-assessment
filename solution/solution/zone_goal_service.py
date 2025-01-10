@@ -3,8 +3,10 @@ import sys
 import rclpy
 from rclpy.node import Node
 from solution_interfaces.srv import SetZoneGoal
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PointStamped, Pose
 from std_msgs.msg import Header
+import tf2_ros
+from tf2_geometry_msgs import PointStamped
 
 import math
 
@@ -35,12 +37,22 @@ class ZoneGoalService(Node):
         self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
         self.double_zone_assigned = False
 
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+
         self.get_logger().info("Initialized Correctly")
 
     def set_zone_goal_callback(self, request, response):
         self.get_logger().info("Received request")
         colour = request.carried_item_colour
-        robot_pose = request.robot_pose
+        robot_point_stamped = PointStamped()
+        robot_point_stamped.header = request.robot_pose.header
+        robot_point_stamped.point = request.robot_pose.pose.position
+        robot_point_stamped = self.tf_buffer.transform(robot_point_stamped, "map")
+        robot_pose = Pose()
+        robot_pose.position = robot_point_stamped.point
+        robot_pose.orientation = request.robot_pose.pose.orientation
+        
         assigned_dest = None
         assigned_zone = None
 
@@ -64,11 +76,13 @@ class ZoneGoalService(Node):
                 if colour_count == 0:
                     assigned_dest = position
                     assigned_zone = zone
+                    self.zone_assignments[zone] = colour
                     break
                 elif colour_count == 1 and not self.double_zone_assigned:
                     self.double_zone_assigned = True
                     assigned_dest = position
                     assigned_zone = zone
+                    self.zone_assignments[zone] = colour
                     break
         
         self.get_logger().info(f"Assigned zone: {assigned_zone}")

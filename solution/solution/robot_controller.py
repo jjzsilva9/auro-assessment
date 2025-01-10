@@ -302,7 +302,9 @@ class RobotController(Node):
     def set_zone_goal(self):
         rqt = SetZoneGoal.Request()
         rqt.carried_item_colour = self.carried_item_colour
-        rqt.robot_pose = self.pose
+        rqt.robot_pose = PoseStamped()
+        rqt.robot_pose.pose = self.pose
+        rqt.robot_pose.header = Header(frame_id="odom")
         try:
             future = self.set_zone_service.call_async(rqt)
             self.executor.spin_until_future_complete(future)
