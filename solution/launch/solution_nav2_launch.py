@@ -45,6 +45,12 @@ def robot_controller_actions(context : LaunchContext):
                 output='screen',
                 parameters=[initial_poses[robot_name]]),
 
+            Node(
+                package='solution',
+                executable='zone_goal_service',
+                output='screen',
+            )
+
             # Node(
             #     package='turtlebot3_gazebo',
             #     executable='turtlebot3_drive',

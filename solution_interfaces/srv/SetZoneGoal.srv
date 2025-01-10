@@ -2,4 +2,4 @@ string carried_item_colour
 geometry_msgs/Pose robot_pose
 ---
 bool success
-geometry_msgs/Pose assigned_dest
+geometry_msgs/PoseStamped assigned_dest
