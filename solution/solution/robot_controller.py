@@ -49,6 +49,7 @@ class RobotController(Node):
         self.collecting_item = None
         self.carried_item_colour = None
         self.robot_id = self.get_namespace()[1:]
+        self.get_logger().info(f"Robot_id: {self.robot_id}")
 
         package_share_directory = get_package_share_directory('solution')
         self.behaviour_tree = os.path.join(package_share_directory, 'config', 'dynamic_replanning.xml') 
@@ -143,7 +144,6 @@ class RobotController(Node):
                 continue
             
             relativePoint = self.itemToWorldCoords(item)
-            self.get_logger().info(f"x: {relativePoint.point.x}, y: {relativePoint.point.y}, z: {relativePoint.point.z}")
             
             # If the estimated coordinates are out of map bounds we should skip, or if another robot is carrying the item
             if -3.75 <= relativePoint.point.x <= 2.75 or -2.75 <= relativePoint.point.y <= 2.75 or relativePoint.point.z < -0.18:
@@ -199,9 +199,7 @@ class RobotController(Node):
 
         worldPoint = PointStamped()
         worldPoint.header = Header(stamp=time, frame_id="map")
-        worldPoint.point.x = relativePoint.point.x + self.odom_to_map[0]
-        worldPoint.point.y = relativePoint.point.y + self.odom_to_map[1]
-        worldPoint.point.z = relativePoint.point.z
+        worldPoint.point = self.convert_odom_to_map(relativePoint.point)
         return worldPoint
         
     def odom_callback(self, msg):
@@ -209,6 +207,14 @@ class RobotController(Node):
         Sets the pose from the odom topic
         """
         self.pose = msg.pose.pose
+
+    def convert_odom_to_map(self, point):
+        worldPoint = Point()
+        worldPoint.x = point.x + self.odom_to_map[0]
+        worldPoint.y = point.y + self.odom_to_map[1]
+        worldPoint.z = point.z
+
+        return worldPoint
 
     def control_loop(self):
         """
@@ -274,8 +280,8 @@ class RobotController(Node):
         rqt = SetZoneGoal.Request()
         rqt.carried_item_colour = self.carried_item_colour
         rqt.robot_pose = PoseStamped()
-        rqt.robot_pose.pose = self.pose
-        rqt.robot_pose.header = Header(frame_id="odom")
+        rqt.robot_pose.pose.position = self.convert_odom_to_map(self.pose.position)
+        rqt.robot_pose.header = Header(frame_id="map")
         try:
             future = self.set_zone_service.call_async(rqt)
             self.executor.spin_until_future_complete(future)
@@ -304,13 +310,13 @@ class RobotController(Node):
 
     def get_item(self):
         rqt = GetItem.Request()
-        rqt.robot_position = self.pose.position
+        rqt.robot_position = self.convert_odom_to_map(self.pose.position)
+        rqt.robot_id = self.robot_id
         try:
             future = self.get_item_client.call_async(rqt)
             self.executor.spin_until_future_complete(future)
             response = future.result()
             if response.success:
-                self.get_logger().info(f'Item is of type: {type(response.item_pose_stamped)}')
                 return response
             else:
                 # If we fail, explore

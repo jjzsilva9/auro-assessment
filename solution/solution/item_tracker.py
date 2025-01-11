@@ -28,6 +28,9 @@ class ItemTracker(Node):
         self.count_publisher = self.create_publisher(Int32, '/tracked_items', 10)
         self.timer = self.create_timer(0.1, self.publish_tracked_items)
 
+        self.declare_parameter('num_robots', 0) 
+        self.robots = self.get_parameter('num_robots').get_parameter_value().integer_value
+
     def add_item_callback(self, request, response):
         """
         Adds a new item if it is not already tracked.
@@ -35,6 +38,7 @@ class ItemTracker(Node):
         This is checked based on distance to an existing point
         and colour.
         """
+
         new_item_position = request.item_position
         new_colour = request.item_colour
 
@@ -57,6 +61,28 @@ class ItemTracker(Node):
         Returns the closest item to a robot.
         """
 
+        if request.robot_id == "robot1":
+            maxX = 2.75
+            maxY = 2.75
+            minX = -3.75   
+            minY = -2.75
+            if self.robots == 2 or self.robots == 3:
+                minY = 0
+            if self.robots == 3:
+                minX = 0
+        elif request.robot_id == "robot2":
+            maxX = 2.75
+            minX = -3.75
+            maxY = 0
+            minY = -2.75
+            if self.robots == 3:
+                minX = 0
+        else:
+            maxX = 0
+            minX = -3.75
+            maxY = 2.75
+            minY = -2.75
+            
         if len(self.item_list) == 0:
             response.success = False
             return response
@@ -65,10 +91,19 @@ class ItemTracker(Node):
         
         i = self.item_list
         i.sort(key=lambda x: self.distance(robot_position, x[0]))
-        item = i[0][0]
 
-        self.item_list.remove(i[0])
+        assigned_item = None
+        for item in i:
+            if minX <= item[0].x <= maxX and minY <= item[0].y <= maxY:
+                assigned_item = item
+                break
 
+        if assigned_item is None:
+            response.success = False
+            return response
+
+        self.item_list.remove(assigned_item)
+        item = assigned_item[0]
         response.item_pose_stamped = PoseStamped()
         response.item_pose_stamped.header = Header(frame_id="map")
         response.item_pose_stamped.pose.position.x = item.x

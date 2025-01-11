@@ -54,16 +54,21 @@ def robot_controller_actions(context : LaunchContext):
             Node(
                 package='solution',
                 executable='item_tracker',
-                output='screen'
+                output='screen',
+                parameters=[{"num_robots" : len((initial_poses.values()))}]
             ),
 
             Node(
-                package="nav2_collision_monitor",
-                executable="collision_monitor_node",
-                name="collision_monitor",
-                output="screen",
-                parameters=[PathJoinSubstitution([FindPackageShare('solution'), 'config', 'collision_monitor_params.yaml'])]
-
+                package='nav2_velocity_smoother',
+                executable='velocity_smoother',
+                name='velocity_smoother',
+                output='screen',
+                # respawn=use_respawn,
+                # respawn_delay=2.0,
+                # parameters=[configured_params],
+                # arguments=['--ros-args', '--log-level', log_level],
+                remappings=
+                    [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]
             ),
 
             # Node(

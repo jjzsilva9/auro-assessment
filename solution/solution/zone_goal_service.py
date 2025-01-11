@@ -45,12 +45,9 @@ class ZoneGoalService(Node):
     def set_zone_goal_callback(self, request, response):
         self.get_logger().info("Received request")
         colour = request.carried_item_colour
-        robot_point_stamped = PointStamped()
-        robot_point_stamped.header = request.robot_pose.header
-        robot_point_stamped.point = request.robot_pose.pose.position
-        robot_point_stamped = self.tf_buffer.transform(robot_point_stamped, "map")
+        
         robot_pose = Pose()
-        robot_pose.position = robot_point_stamped.point
+        robot_pose.position = request.robot_pose.pose.position
         robot_pose.orientation = request.robot_pose.pose.orientation
         
         assigned_dest = None

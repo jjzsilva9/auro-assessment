@@ -1,4 +1,5 @@
 geometry_msgs/Point robot_position
+string robot_id
 ---
 bool success
 geometry_msgs/PoseStamped item_pose_stamped

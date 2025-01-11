@@ -1,4 +1,5 @@
 geometry_msgs/Point item_position
 string item_colour
+string robot_id
 ---
 bool success
