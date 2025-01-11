@@ -40,10 +40,10 @@ class ZoneGoalService(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
-        self.get_logger().info("Initialized Correctly")
-
     def set_zone_goal_callback(self, request, response):
-        self.get_logger().info("Received request")
+
+        
+        self.get_logger().info(f'Purple: {self.zone_assignments["Purple"]}, Cyan: {self.zone_assignments["Cyan"]}, Green: {self.zone_assignments["Green"]}, Pink: {self.zone_assignments["Pink"]}')
         colour = request.carried_item_colour
         
         robot_pose = request.robot_pose.pose
@@ -52,8 +52,7 @@ class ZoneGoalService(Node):
         assigned_zone = None
 
         # Sorts the zones on euclidean distance
-        self.get_logger().info(f"RECEIVED ZONE REQUEST FROM {robot_pose.position.x}, {robot_pose.position.y}, {robot_pose.position.z}")
-        distances = [[zone, position, self.distance(robot_pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
+        distances = [(zone, position, self.distance(robot_pose.position, position.pose.position)) for zone, position in self.zone_locations.items()]
         distances.sort(key=lambda x:x[2])
         
         # Counts the zone assignments of the colour

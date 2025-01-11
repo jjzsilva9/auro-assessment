@@ -161,6 +161,7 @@ class RobotController(Node):
         
         Used to identify the colour of a carried item.
         """
+        self.get_logger().info(f"{msg.data}")
         for robot in msg.data:
             if robot.robot_id == self.robot_id:
                 self.carried_item_colour = robot.item_colour
@@ -318,12 +319,7 @@ class RobotController(Node):
             future = self.get_item_client.call_async(rqt)
             self.executor.spin_until_future_complete(future)
             response = future.result()
-            if response.success:
-                return response
-            else:
-                # If we fail, explore
-                self.get_logger().info('Get Item failed, likely no tracked items')
-                self.state = State.EXPLORING
+            return response
         except Exception as e:
             self.get_logger().info('Exception ' + str(e))
 

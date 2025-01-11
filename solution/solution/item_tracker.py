@@ -103,8 +103,6 @@ class ItemTracker(Node):
             minX = -3.75
             maxY = 2.75
             minY = -2.75
-            
-        if len(self.item_list) == 0:
         
         robot_position = request.robot_position
         
@@ -117,7 +115,7 @@ class ItemTracker(Node):
                 assigned_item = item
                 break
 
-        if assigned_item is None:
+        if assigned_item == None:
             response.success = False
 
             potentialZones = ["Purple", "Cyan", "Green", "Pink"]
@@ -133,7 +131,8 @@ class ItemTracker(Node):
                     potentialZones = ["Green"]
             elif request.robot_id == "robot3":
                 potentialZones = ["Cyan", "Purple"]
-            response.item_pose_stamped = self.zone_locations[random.choice(potentialZones)]
+            zone = random.choice(potentialZones)
+            response.item_pose_stamped = self.zone_locations[zone]
             return response
 
         self.item_list.remove(assigned_item)
