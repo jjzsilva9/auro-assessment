@@ -45,6 +45,7 @@ class ZoneGoalService(Node):
         
         self.get_logger().info(f'Purple: {self.zone_assignments["Purple"]}, Cyan: {self.zone_assignments["Cyan"]}, Green: {self.zone_assignments["Green"]}, Pink: {self.zone_assignments["Pink"]}')
         colour = request.carried_item_colour
+        self.get_logger().info(f"Received request for item of colour: {colour}")
         
         robot_pose = request.robot_pose.pose
         

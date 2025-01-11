@@ -25,6 +25,7 @@ from tf2_geometry_msgs import PointStamped
 from enum import Enum
 import numpy as np
 import math
+import threading
 
 CAMERA_HEIGHT = 480
 CAMERA_WIDTH = 640
@@ -92,6 +93,8 @@ class RobotController(Node):
             self.carried_item_callback,
             10, callback_group=timer_callback_group
         )
+
+        self.condition = threading.Condition()
 
         self.odom_subscriber = self.create_subscription(
             Odometry,
@@ -161,10 +164,11 @@ class RobotController(Node):
         
         Used to identify the colour of a carried item.
         """
-        self.get_logger().info(f"{msg.data}")
-        for robot in msg.data:
-            if robot.robot_id == self.robot_id:
-                self.carried_item_colour = robot.item_colour
+        with self.condition:
+            for robot in msg.data:
+                if robot.robot_id == self.robot_id:
+                    self.carried_item_colour = robot.item_colour
+                    self.condition.notify_all()
 
     def distance(self, point1, point2): 
         """
@@ -253,9 +257,7 @@ class RobotController(Node):
                             self.set_zone_goal()
                             self.state = State.RETURNING
                         else:
-                            # If we fail to pick up, we back up slightly and then see if an item is visible
                             self.get_logger().info('Unable to pick up item: ' + response.message)
-                            self.navigator.backup(backup_dist=0.1)
                             self.state = State. EXPLORING
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
@@ -279,7 +281,13 @@ class RobotController(Node):
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
 
+    def wait_for_carried_colour(self):
+        with self.condition:
+            while self.carried_item_colour == '':
+                self.condition.wait()
+
     def set_zone_goal(self):
+        self.wait_for_carried_colour()
         rqt = SetZoneGoal.Request()
         rqt.carried_item_colour = self.carried_item_colour
         rqt.robot_pose = PoseStamped()

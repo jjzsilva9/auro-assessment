@@ -43,8 +43,8 @@ def robot_controller_actions(context : LaunchContext):
                 # prefix=['wt.exe --window 0 new-tab wsl.exe -e bash -ic'], # Opens in new tab
                 # prefix=['wt.exe wsl.exe -e bash -ic'], # Opens in new window
                 output='screen',
-                parameters=[{"initial_pose" : list(initial_poses[robot_name].values())}],
-                arguments=['--ros-args', '--log-level', 'info']),
+                parameters=[{"initial_pose" : list(initial_poses[robot_name].values())}]),
+                #arguments=['--ros-args', '--log-level', 'info']),
 
             Node(
                 package='solution',
