@@ -1,21 +1,22 @@
-import sys
-
 import rclpy
 from rclpy.node import Node
 from solution_interfaces.srv import SetZoneGoal
-from geometry_msgs.msg import PoseStamped, PointStamped, Pose
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 import tf2_ros
-from tf2_geometry_msgs import PointStamped
 from assessment_interfaces.msg import ItemHolders
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 import time
 import math
 
 class ZoneGoalService(Node):
+    """
+    Manages the assigned zones when robots pick up an item.
+    """
     def __init__(self):
         super().__init__('zone_goal_service')
+        
         timer_callback_group = ReentrantCallbackGroup()
         service_callback_group = ReentrantCallbackGroup()
         self.carried_items_subscriber = self.create_subscription(
@@ -54,11 +55,18 @@ class ZoneGoalService(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
     def carried_item_callback(self, msg):
+        """
+        Processes data from the /item_holders topic to see what items
+        are being carried.
+        """
         for robot in msg.data:
-            self.get_logger().info(f"Robot ID: {robot.robot_id}, Holding Item: {robot.holding_item}, Item Colour: {robot.item_colour}, Item Value: {robot.item_value}")
             self.carried_items[robot.robot_id] = robot.item_colour
 
     def wait_for_carried_item(self, robot_id):
+        """
+        Waits for colour data to be published when an item is picked up,
+        called through the set_zone_goal service.
+        """
         timeout = 5
         total_time = 0
         while self.carried_items[robot_id] == '' and total_time < timeout:
@@ -68,6 +76,19 @@ class ZoneGoalService(Node):
             raise Exception("No colour data published for carried item")
 
     def set_zone_goal_callback(self, request, response):
+        """
+        Provides an assigned zone when an item is picked up.
+        
+        Takes as input:
+        
+        - string robot_id
+        - geometry_msgs/PoseStamped robot_pose
+        
+        returns:
+        
+        - bool success
+        - geometry_msgs/PoseStamped assigned_dest
+        """
         self.wait_for_carried_item(request.robot_id)
         colour = self.carried_items[request.robot_id]
         self.get_logger().info(f"Received request for item of colour: {colour}")

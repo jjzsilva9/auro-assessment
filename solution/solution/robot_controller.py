@@ -10,9 +10,9 @@ from nav2_simple_commander.robot_navigator import BasicNavigator
 from geometry_msgs.msg import Twist, Pose, PointStamped, Point, PoseWithCovarianceStamped, PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo
-from std_msgs.msg import Header, Int32
+from std_msgs.msg import Header
 from vision_msgs.msg import Point2D
-from assessment_interfaces.msg import ItemList, ItemHolders
+from assessment_interfaces.msg import ItemList
 from auro_interfaces.srv import ItemRequest
 from solution_interfaces.srv import SetZoneGoal, AddItem, GetItem
 from builtin_interfaces.msg import Time
@@ -22,11 +22,8 @@ import os
 import tf2_ros
 from tf2_geometry_msgs import PointStamped
 
-import time
 from enum import Enum
-import numpy as np
 import math
-import threading
 
 CAMERA_HEIGHT = 480
 CAMERA_WIDTH = 640
@@ -45,11 +42,7 @@ class RobotController(Node):
 
         self.state = State.EXPLORING
         self.pose = Pose()
-        self.tracked_items = 0
 
-        self.tracking_item = None
-        self.collecting_item = None
-        self.carried_item_colour = None
         self.robot_id = self.get_namespace()[1:]
         self.get_logger().info(f"Robot_id: {self.robot_id}")
 
@@ -81,21 +74,6 @@ class RobotController(Node):
             10, callback_group=timer_callback_group
         )
 
-        self.tracked_items_subscriber = self.create_subscription(
-            Int32,
-            '/tracked_items',
-            self.tracked_items_callback,
-            10, callback_group=timer_callback_group
-        )
-
-        self.carried_item_subscriber = self.create_subscription(
-            ItemHolders,
-            '/item_holders',
-            self.carried_item_callback,
-            10, callback_group=timer_callback_group
-        )
-        
-
         self.odom_subscriber = self.create_subscription(
             Odometry,
             f'/{self.robot_id}/odom',
@@ -113,7 +91,7 @@ class RobotController(Node):
         self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, f'/{self.robot_id}/initialpose', 10) 
 
         self.declare_parameter('initial_pose', [0.0, 0.0, 0.0]) 
-        initial_x, initial_y, initial_yaw= self.get_parameter('initial_pose').get_parameter_value().double_array_value
+        initial_x, initial_y, initial_yaw = self.get_parameter('initial_pose').get_parameter_value().double_array_value
         
         initial_pose = PoseWithCovarianceStamped() 
         initial_pose.header.frame_id = 'map' 
@@ -142,7 +120,7 @@ class RobotController(Node):
         for item in self.items.data:
             # We determine distance from the pixel size of the item
             # When the item is at an extreme of the image, this is warped
-            # This can lead to an inaccuracte estimate of the point, so we should skip
+            # This can lead to an inaccurate estimate of the point, so we should skip
             if abs(item.x) > 160:
                 continue
             
@@ -151,22 +129,6 @@ class RobotController(Node):
             # If the estimated coordinates are out of map bounds we should skip, or if another robot is carrying the item
             if -3.75 <= relativePoint.point.x <= 2.75 or -2.75 <= relativePoint.point.y <= 2.75 or relativePoint.point.z < -0.18:
                 self.add_item(relativePoint.point, item.colour)
-            
-    def tracked_items_callback(self, msg):
-        """
-        Stores the amount of items tracked in ItemTracker
-        """
-        self.tracked_items = msg.data
-
-    def carried_item_callback(self, msg):
-        """
-        Processes data from the item_holders topic.
-        
-        Used to identify the colour of a carried item.
-        """
-        for robot in msg.data:
-            if robot.robot_id == self.robot_id:
-                self.carried_item_colour = robot.item_colour
 
     def distance(self, point1, point2): 
         """
@@ -212,6 +174,11 @@ class RobotController(Node):
         self.pose = msg.pose.pose
 
     def convert_odom_to_map(self, point):
+        """
+        Converts from points in the odom frame to the map frame.
+        
+        This is quicker to store the translation than to use tf.
+        """
         worldPoint = Point()
         worldPoint.x = point.x + self.odom_to_map[0]
         worldPoint.y = point.y + self.odom_to_map[1]
@@ -228,8 +195,9 @@ class RobotController(Node):
                 # State for exploring to find items when none have been found
 
                 response = self.get_item()
-                # If we have a relevant item, cancel exploration and go to it
+                
                 if response.success:
+                    # If we have a relevant item, cancel exploration and go to it
                     self.navigator.cancelTask()
                     result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
                     if result:  
@@ -243,7 +211,7 @@ class RobotController(Node):
                 # State for navigating using nav2 to the approximate location of an item
                 
                 if self.navigator.isTaskComplete():
-                    # Try to pickup
+                    # If we are at the item, try to pick it up
                     rqt = ItemRequest.Request()
                     rqt.robot_id = self.robot_id
                     try:
@@ -251,10 +219,12 @@ class RobotController(Node):
                         self.executor.spin_until_future_complete(future)
                         response = future.result()
                         if response.success:
+                            # If we pick it up, get a zone and return the item
                             self.get_logger().info('Item picked up.')
                             self.set_zone_goal()
                             self.state = State.RETURNING
                         else:
+                            # If we fail to pick it up, explore
                             self.get_logger().info('Unable to pick up item: ' + response.message)
                             self.state = State. EXPLORING
                     except Exception as e:
@@ -274,12 +244,16 @@ class RobotController(Node):
                             self.get_logger().info('Item returned up.')
                             self.state = State.EXPLORING
                         else:
-                            # TODO Add a retry here, or handle if it actually isnt carrying an item
                             self.get_logger().info('Unable to offload item: ' + response.message)
+                            self.state = State.EXPLORING
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
 
     def set_zone_goal(self):
+        """
+        Interacts with the zone_goal_service node through the /set_zone_goal service
+        to get an assigned zone.
+        """
         rqt = SetZoneGoal.Request()
         rqt.robot_id = self.robot_id
         rqt.robot_pose = PoseStamped()
@@ -302,6 +276,10 @@ class RobotController(Node):
             self.get_logger().info('Exception ' + str(e))
 
     def add_item(self, item_position, item_colour):
+        """
+        Interacts with the item_tracker node through the /add_item service
+        to add an item to be tracked.
+        """
         rqt = AddItem.Request()
         rqt.item_position = item_position
         rqt.item_colour = item_colour
@@ -312,6 +290,10 @@ class RobotController(Node):
             self.get_logger().info('Exception ' + str(e))
 
     def get_item(self):
+        """
+        Interacts with the item_tracker node through the /get_item service
+        to get an item or assigned zone to navigate to.
+        """
         rqt = GetItem.Request()
         rqt.robot_position = self.convert_odom_to_map(self.pose.position)
         rqt.robot_id = self.robot_id
