@@ -49,6 +49,7 @@ def robot_controller_actions(context : LaunchContext):
                 package='solution',
                 executable='zone_goal_service',
                 output='screen',
+                parameters=[{"num_robots" : len((initial_poses.values()))}]
             ),
 
             Node(

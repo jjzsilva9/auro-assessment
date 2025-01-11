@@ -224,18 +224,18 @@ class RobotController(Node):
             case State.EXPLORING:
                 # State for exploring to find items when none have been found
 
-                coords = self.convert_odom_to_map(self.pose.position)
-                self.get_logger().info(f"CURRENTLY AT MAP: {coords.x}, {coords.y}, {coords.z}")
-
-                # If an item is found, set the closest one as the goal destination
-                # if self.tracked_items > 0:
-                    
-                #     response = self.get_item()
-                    
-                #     if response:
-                #         result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
-                #         if result:  
-                #             self.state = State.NAVIGATING
+                response = self.get_item()
+                # If we have a relevant item, cancel exploration and go to it
+                if response.success:
+                    self.navigator.cancelTask()
+                    result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
+                    if result:  
+                        self.state = State.NAVIGATING
+                else:
+                    # If there is no available item, go to the assigned zone to hopefully
+                    # spot items on the way
+                    if self.navigator.isTaskComplete():
+                        result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
             case State.NAVIGATING:
                 # State for navigating using nav2 to the approximate location of an item
                 
@@ -277,7 +277,6 @@ class RobotController(Node):
                             self.get_logger().info('Unable to offload item: ' + response.message)
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
-
 
     def set_zone_goal(self):
         rqt = SetZoneGoal.Request()

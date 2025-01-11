@@ -8,6 +8,7 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 
 import math
+import random
 
 class ItemTracker(Node):
     """
@@ -27,6 +28,26 @@ class ItemTracker(Node):
         self.get_item = self.create_service(GetItem, '/get_item', self.get_item_callback)
         self.count_publisher = self.create_publisher(Int32, '/tracked_items', 10)
         self.timer = self.create_timer(0.1, self.publish_tracked_items)
+
+        zone_header = Header(frame_id="map")
+        purple_pose = PoseStamped()
+        purple_pose.header = zone_header
+        purple_pose.pose.position.x=-3.5
+        purple_pose.pose.position.y=-2.5
+        cyan_pose = PoseStamped()
+        cyan_pose.header = zone_header
+        cyan_pose.pose.position.x=-3.5
+        cyan_pose.pose.position.y=2.5
+        green_pose = PoseStamped()
+        green_pose.header = zone_header
+        green_pose.pose.position.x=2.5
+        green_pose.pose.position.y=-2.5
+        pink_pose = PoseStamped()
+        pink_pose.header = zone_header
+        pink_pose.pose.position.x=2.5
+        pink_pose.pose.position.y=2.5
+        
+        self.zone_locations = {"Purple" : purple_pose, "Cyan" : cyan_pose, "Green" : green_pose, "Pink" : pink_pose}
 
         self.declare_parameter('num_robots', 0) 
         self.robots = self.get_parameter('num_robots').get_parameter_value().integer_value
@@ -84,8 +105,6 @@ class ItemTracker(Node):
             minY = -2.75
             
         if len(self.item_list) == 0:
-            response.success = False
-            return response
         
         robot_position = request.robot_position
         
@@ -100,6 +119,21 @@ class ItemTracker(Node):
 
         if assigned_item is None:
             response.success = False
+
+            potentialZones = ["Purple", "Cyan", "Green", "Pink"]
+            if request.robot_id == "robot1":
+                if self.robots == 2:
+                    potentialZones = ["Cyan", "Pink"]
+                elif self.robots == 3:
+                    potentialZones = ["Pink"]
+            elif request.robot_id == "robot2":
+                if self.robots == 2:
+                    potentialZones = ["Purple", "Green"]
+                elif self.robots == 3:
+                    potentialZones = ["Green"]
+            elif request.robot_id == "robot3":
+                potentialZones = ["Cyan", "Purple"]
+            response.item_pose_stamped = self.zone_locations[random.choice(potentialZones)]
             return response
 
         self.item_list.remove(assigned_item)
