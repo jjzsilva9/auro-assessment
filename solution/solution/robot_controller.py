@@ -23,6 +23,7 @@ import tf2_ros
 from tf2_geometry_msgs import PointStamped
 
 from enum import Enum
+import numpy as np
 import math
 
 CAMERA_HEIGHT = 480
@@ -121,6 +122,8 @@ class RobotController(Node):
         pose_stamped.pose = initial_pose.pose.pose
         self.initial_pose_publisher.publish(initial_pose)
 
+        self.odom_to_map = [initial_x, initial_y]
+
         self.navigator = BasicNavigator(namespace=self.get_namespace())
         self.navigator.setInitialPose(pose_stamped)
 
@@ -140,9 +143,10 @@ class RobotController(Node):
                 continue
             
             relativePoint = self.itemToWorldCoords(item)
+            self.get_logger().info(f"x: {relativePoint.point.x}, y: {relativePoint.point.y}, z: {relativePoint.point.z}")
             
-            # If the estimated coordinates are out of map bounds we should skip
-            if 0 <= relativePoint.point.x <= 6 and -2.5 <= relativePoint.point.y <= 2.5:
+            # If the estimated coordinates are out of map bounds we should skip, or if another robot is carrying the item
+            if -3.75 <= relativePoint.point.x <= 2.75 or -2.75 <= relativePoint.point.y <= 2.75 or relativePoint.point.z < -0.18:
                 self.add_item(relativePoint.point, item.colour)
             
     def tracked_items_callback(self, msg):
@@ -157,7 +161,9 @@ class RobotController(Node):
         
         Used to identify the colour of a carried item.
         """
-        self.carried_item_colour = msg.data[0].item_colour
+        for robot in msg.data:
+            if robot.robot_id == self.robot_id:
+                self.carried_item_colour = robot.item_colour
 
     def distance(self, point1, point2): 
         """
@@ -190,7 +196,13 @@ class RobotController(Node):
         header = Header(stamp=time, frame_id="base_footprint")
         point_stamped = PointStamped(header=header, point=point_3D)
         relativePoint = self.tf_buffer.transform(point_stamped, "odom")
-        return relativePoint
+
+        worldPoint = PointStamped()
+        worldPoint.header = Header(stamp=time, frame_id="map")
+        worldPoint.point.x = relativePoint.point.x + self.odom_to_map[0]
+        worldPoint.point.y = relativePoint.point.y + self.odom_to_map[1]
+        worldPoint.point.z = relativePoint.point.z
+        return worldPoint
         
     def odom_callback(self, msg):
         """
@@ -234,50 +246,9 @@ class RobotController(Node):
                             # If we fail to pick up, we back up slightly and then see if an item is visible
                             self.get_logger().info('Unable to pick up item: ' + response.message)
                             self.navigator.backup(backup_dist=0.1)
-                            self.state = State.BACKING_UP
+                            self.state = State. EXPLORING
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
-            case State.BACKING_UP:
-                # State for backing up
-
-                if self.navigator.isTaskComplete():
-                    if len(self.items.data) == 0:
-                        self.state = State.EXPLORING
-                    else:
-                        self.state = State.COLLECTING
-            case State.COLLECTING:
-                # State for collecting if the pickup from nav2 fails
-                
-                # We pick the closest item to collect
-                i = self.items.data
-                i.sort(reverse=True, key = lambda x: x.diameter)
-                self.collecting_item = i[0]
-                estimated_distance = 32.4 * float(self.collecting_item.diameter) ** -0.75 #69.0 * float(item.diameter) ** -0.89
-
-                # Attempt to pickup if we are close enough
-                if estimated_distance <= 0.35:
-                    rqt = ItemRequest.Request()
-                    rqt.robot_id = self.robot_id
-                    try:
-                        future = self.pick_up_service.call_async(rqt)
-                        self.executor.spin_until_future_complete(future)
-                        response = future.result()
-                        if response.success:
-                            # If we succeed, set a zone as the goal
-                            self.get_logger().info('Item picked up.')
-                            self.set_zone_goal()
-                            self.state = State.RETURNING
-                        else:
-                            # If we fail, explore
-                            self.get_logger().info('Unable to pick up item: ' + response.message)
-                            self.state = State.EXPLORING
-                    except Exception as e:
-                        self.get_logger().info('Exception ' + str(e))   
-
-                msg = Twist()
-                msg.linear.x = 0.25 * estimated_distance
-                msg.angular.z = self.collecting_item.x / 320.0
-                self.cmd_vel_publisher.publish(msg)
             case State.RETURNING:
                 # State for returning to a zone if we are carrying an item
 

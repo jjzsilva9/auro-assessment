@@ -70,7 +70,7 @@ class ItemTracker(Node):
         self.item_list.remove(i[0])
 
         response.item_pose_stamped = PoseStamped()
-        response.item_pose_stamped.header = Header(frame_id="odom")
+        response.item_pose_stamped.header = Header(frame_id="map")
         response.item_pose_stamped.pose.position.x = item.x
         response.item_pose_stamped.pose.position.y = item.y
         response.item_pose_stamped.pose.position.z = item.z

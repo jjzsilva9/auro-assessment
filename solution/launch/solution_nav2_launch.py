@@ -55,7 +55,16 @@ def robot_controller_actions(context : LaunchContext):
                 package='solution',
                 executable='item_tracker',
                 output='screen'
-            )
+            ),
+
+            Node(
+                package="nav2_collision_monitor",
+                executable="collision_monitor_node",
+                name="collision_monitor",
+                output="screen",
+                parameters=[PathJoinSubstitution([FindPackageShare('solution'), 'config', 'collision_monitor_params.yaml'])]
+
+            ),
 
             # Node(
             #     package='turtlebot3_gazebo',
