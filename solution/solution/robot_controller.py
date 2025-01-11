@@ -224,15 +224,18 @@ class RobotController(Node):
             case State.EXPLORING:
                 # State for exploring to find items when none have been found
 
+                coords = self.convert_odom_to_map(self.pose.position)
+                self.get_logger().info(f"CURRENTLY AT MAP: {coords.x}, {coords.y}, {coords.z}")
+
                 # If an item is found, set the closest one as the goal destination
-                if self.tracked_items > 0:
+                # if self.tracked_items > 0:
                     
-                    response = self.get_item()
+                #     response = self.get_item()
                     
-                    if response:
-                        result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
-                        if result:  
-                            self.state = State.NAVIGATING
+                #     if response:
+                #         result = self.navigator.goToPose(response.item_pose_stamped, behavior_tree=self.behaviour_tree)
+                #         if result:  
+                #             self.state = State.NAVIGATING
             case State.NAVIGATING:
                 # State for navigating using nav2 to the approximate location of an item
                 

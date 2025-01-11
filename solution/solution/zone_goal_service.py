@@ -46,14 +46,13 @@ class ZoneGoalService(Node):
         self.get_logger().info("Received request")
         colour = request.carried_item_colour
         
-        robot_pose = Pose()
-        robot_pose.position = request.robot_pose.pose.position
-        robot_pose.orientation = request.robot_pose.pose.orientation
+        robot_pose = request.robot_pose.pose
         
         assigned_dest = None
         assigned_zone = None
 
         # Sorts the zones on euclidean distance
+        self.get_logger().info(f"RECEIVED ZONE REQUEST FROM {robot_pose.position.x}, {robot_pose.position.y}, {robot_pose.position.z}")
         distances = [[zone, position, self.distance(robot_pose.position, position.pose.position)] for zone, position in self.zone_locations.items()]
         distances.sort(key=lambda x:x[2])
         
