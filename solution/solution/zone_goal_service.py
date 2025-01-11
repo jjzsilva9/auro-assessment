@@ -7,13 +7,24 @@ from geometry_msgs.msg import PoseStamped, PointStamped, Pose
 from std_msgs.msg import Header
 import tf2_ros
 from tf2_geometry_msgs import PointStamped
-
+from assessment_interfaces.msg import ItemHolders
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+import time
 import math
 
 class ZoneGoalService(Node):
     def __init__(self):
         super().__init__('zone_goal_service')
-        self.srv = self.create_service(SetZoneGoal, '/set_zone_goal', self.set_zone_goal_callback)
+        timer_callback_group = ReentrantCallbackGroup()
+        service_callback_group = ReentrantCallbackGroup()
+        self.carried_items_subscriber = self.create_subscription(
+            ItemHolders,
+            '/item_holders',
+            self.carried_item_callback,
+            10, callback_group=timer_callback_group
+        )
+        self.srv = self.create_service(SetZoneGoal, '/set_zone_goal', self.set_zone_goal_callback, callback_group=service_callback_group)
 
         zone_header = Header(frame_id="map")
         purple_pose = PoseStamped()
@@ -37,14 +48,28 @@ class ZoneGoalService(Node):
         self.zone_assignments = {"Purple" : None, "Cyan" : None, "Green" : None, "Pink" : None}
         self.double_zone_assigned = False
 
+        self.carried_items = {}
+
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
-    def set_zone_goal_callback(self, request, response):
+    def carried_item_callback(self, msg):
+        for robot in msg.data:
+            self.get_logger().info(f"Robot ID: {robot.robot_id}, Holding Item: {robot.holding_item}, Item Colour: {robot.item_colour}, Item Value: {robot.item_value}")
+            self.carried_items[robot.robot_id] = robot.item_colour
 
-        
-        self.get_logger().info(f'Purple: {self.zone_assignments["Purple"]}, Cyan: {self.zone_assignments["Cyan"]}, Green: {self.zone_assignments["Green"]}, Pink: {self.zone_assignments["Pink"]}')
-        colour = request.carried_item_colour
+    def wait_for_carried_item(self, robot_id):
+        timeout = 5
+        total_time = 0
+        while self.carried_items[robot_id] == '' and total_time < timeout:
+            time.sleep(0.1)
+            total_time += 0.1
+        if self.carried_items[robot_id] == '':
+            raise Exception("No colour data published for carried item")
+
+    def set_zone_goal_callback(self, request, response):
+        self.wait_for_carried_item(request.robot_id)
+        colour = self.carried_items[request.robot_id]
         self.get_logger().info(f"Received request for item of colour: {colour}")
         
         robot_pose = request.robot_pose.pose
@@ -95,7 +120,9 @@ class ZoneGoalService(Node):
 def main(args=None): 
     rclpy.init(args=args)
     node = ZoneGoalService()
-    rclpy.spin(node)
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+    executor.spin()
     rclpy.shutdown() 
     
 if __name__ == '__main__':

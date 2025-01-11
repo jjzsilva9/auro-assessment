@@ -1,4 +1,4 @@
-string carried_item_colour
+string robot_id
 geometry_msgs/PoseStamped robot_pose
 ---
 bool success

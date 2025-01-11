@@ -22,6 +22,7 @@ import os
 import tf2_ros
 from tf2_geometry_msgs import PointStamped
 
+import time
 from enum import Enum
 import numpy as np
 import math
@@ -93,8 +94,7 @@ class RobotController(Node):
             self.carried_item_callback,
             10, callback_group=timer_callback_group
         )
-
-        self.condition = threading.Condition()
+        
 
         self.odom_subscriber = self.create_subscription(
             Odometry,
@@ -164,11 +164,9 @@ class RobotController(Node):
         
         Used to identify the colour of a carried item.
         """
-        with self.condition:
-            for robot in msg.data:
-                if robot.robot_id == self.robot_id:
-                    self.carried_item_colour = robot.item_colour
-                    self.condition.notify_all()
+        for robot in msg.data:
+            if robot.robot_id == self.robot_id:
+                self.carried_item_colour = robot.item_colour
 
     def distance(self, point1, point2): 
         """
@@ -281,15 +279,9 @@ class RobotController(Node):
                     except Exception as e:
                         self.get_logger().info('Exception ' + str(e))
 
-    def wait_for_carried_colour(self):
-        with self.condition:
-            while self.carried_item_colour == '':
-                self.condition.wait()
-
     def set_zone_goal(self):
-        self.wait_for_carried_colour()
         rqt = SetZoneGoal.Request()
-        rqt.carried_item_colour = self.carried_item_colour
+        rqt.robot_id = self.robot_id
         rqt.robot_pose = PoseStamped()
         rqt.robot_pose.pose.position = self.convert_odom_to_map(self.pose.position)
         rqt.robot_pose.header = Header(frame_id="map")
