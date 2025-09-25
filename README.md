@@ -1,7 +1,7 @@
 <h1>Autonomous Retrieval and Collection Robots</h1>
 
 This repository contains the code used for the coursework for Autonomous Robotics, a module I took in my final year of undergraduate studies at the University of York.
-To read the full report you can click <a href="">here</a>.
+To read the full report you can click <a href="AURO_Report.pdf">here</a>.
 
 This paper details the architecture and evaluation of an autonomous robotic system developed
 to retrieve and deposit items efficiently. To achieve this, a deliberative architecture was used,
@@ -11,7 +11,8 @@ taken from microservice architecture, to maintain modularity and to facilitate e
 
 <h2>Architecture</h2>
 
-<img src=""></image>
+<img src="auro_architecture.drawio.png"></image>
+
 The robot controller node implements the main control strategy using a finite state machine
 (FSM). Nav2 also implements some of the control strategy which is implemented through a
 behavior tree (BT). The robot controller node receives information about visible items through
@@ -89,3 +90,36 @@ The benefit of being able to track items between the robots outweighs the impact
 to a ghost item completely. This system also enables the usage of Nav2 for all navigation, which
 enables more deliberative actions and collision avoidance. The system could however benefit
 from a more low-level collision avoidance solution, such as implementing a collision monitor.
+
+<h2>Example Scenarios</h2>
+<div style="text-align: center;">
+  <p float="left">
+    <img src="scen1_1.png" width="45%" />
+    <img src="scen1_2.png" width="45%" />
+  </p>
+  <p><em>Scene 1:  A robot replans its route after being blocked by another robot</em></p>
+</div>
+
+<div style="text-align: center;">
+  <p float="left">
+    <img src="scen2_1.png" width="45%" />
+    <img src="scen2_2.png" width="45%" />
+  </p>
+  <p><em>Scene 2: A robot begins tracking an item observed by another robot</em></p>
+</div>
+
+<div style="text-align: center;">
+  <p float="left">
+    <img src="scen3_1.png" width="45%" />
+    <img src="scen3_2.png" width="45%" />
+  </p>
+  <p><em>Scene 3: Close navigation between 2 robots</em></p>
+</div>
+
+<div style="text-align: center;">
+  <p float="left">
+    <img src="scen4_1.png" width="45%" />
+    <img src="scen4_2.png" width="45%" />
+  </p>
+  <p><em>Scene 4:  A robot is directed to the closest zone after picking up an item</em></p>
+</div>
